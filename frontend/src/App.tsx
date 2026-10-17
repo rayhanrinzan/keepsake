@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ScanLine } from 'lucide-react'
+import { ChevronDown, ScanLine } from 'lucide-react'
 import { api } from './lib/api'
 import type { Health, MoveEvent, QueryResult, Region, TrackedObject } from './lib/api'
 import { ObjectList } from './components/ObjectList'
 import { ObjectDetail } from './components/ObjectDetail'
-import { RoomMap } from './components/RoomMap'
+import { PinLegend, RoomBlueprint } from './components/RoomBlueprint'
+import { ItemPanel } from './components/ItemPanel'
+import { Sidebar } from './components/Sidebar'
+import type { View } from './components/Sidebar'
 import { SearchPanel } from './components/SearchPanel'
 import { CameraPanel } from './components/CameraPanel'
 import { ActivityFeed } from './components/ActivityFeed'
@@ -12,13 +15,13 @@ import { PrivacyPanel } from './components/PrivacyPanel'
 import { ScanFlow } from './components/ScanFlow'
 
 const POLL_MS = 1500
-type View = 'list' | 'map'
 
 function readView(): View {
   try {
-    return localStorage.getItem('keepsake.view') === 'map' ? 'map' : 'list'
+    const v = localStorage.getItem('keepsake.view')
+    return v === 'list' || v === 'settings' ? v : 'map'
   } catch {
-    return 'list'
+    return 'map'
   }
 }
 
@@ -32,7 +35,7 @@ function CameraStatus({ health, offline }: { health: Health | null; offline: boo
           : health.camera === 'disabled' ? ['Camera off', 'bg-faint']
             : ['Camera unavailable', 'bg-caution']
   return (
-    <span role="status" className="flex items-center gap-2 text-[13px] text-muted">
+    <span role="status" className="flex items-center gap-2 text-[13px] text-white/60">
       <span aria-hidden className={`size-2 rounded-full ${dot}`} />
       {label}
     </span>
@@ -48,6 +51,8 @@ export default function App() {
   const [view, setView] = useState<View>(readView)
   const [openId, setOpenId] = useState<string | null>(null)
   const [highlightId, setHighlightId] = useState<string | null>(null)
+  const [hoverId, setHoverId] = useState<string | null>(null)
+  const [itemsOpen, setItemsOpen] = useState(() => window.innerWidth >= 768)
   const [scanning, setScanning] = useState(false)
   const [now, setNow] = useState(Date.now())
 
@@ -86,6 +91,13 @@ export default function App() {
     return () => clearTimeout(t)
   }, [highlightId])
 
+  /** A pin was clicked: light up its card under the map. */
+  function pickPin(id: string) {
+    setHighlightId(id)
+    setItemsOpen(true)
+    requestAnimationFrame(() => document.getElementById(`item-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+  }
+
   function onAnswer(r: QueryResult) {
     if (!r.object) return
     setHighlightId(r.object.object_id)
@@ -112,71 +124,93 @@ export default function App() {
   const canScan = health != null && health.camera !== 'disabled' && health.mode === 'MONITORING'
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pt-5 pb-16 sm:px-6 sm:pt-8">
-      <header className="mb-6 flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Keepsake</h1>
-          <p className="text-[14px] text-muted">Your room remembers, so you don&apos;t have to.</p>
-        </div>
-        <div className="flex items-center gap-4">
-          <CameraStatus health={health} offline={offline} />
-          <button
-            onClick={startScan}
-            disabled={!canScan}
-            className="press flex h-10 items-center gap-2 rounded-xl border border-transparent bg-surface px-3.5 text-[14px] font-medium shadow-ring hover:bg-sunken disabled:opacity-50"
-          >
-            <ScanLine className="size-4" strokeWidth={1.75} /> Scan room
-          </button>
-        </div>
-      </header>
+    <div className="md:pl-60">
+      <Sidebar
+        view={view}
+        onView={setView}
+        status={<CameraStatus health={health} offline={offline} />}
+        canScan={canScan}
+        onScan={startScan}
+      />
 
-      {offline && (
-        <p className="mb-4 rounded-xl bg-caution-soft px-4 py-3 text-caution">
-          Can&apos;t reach Keepsake. Showing the last memories loaded. Start the backend to see updates.
-        </p>
-      )}
+      {view === 'map' && (
+        <main className="relative h-svh overflow-hidden">
+          {/* The room fills the whole window; the title and items float over it on frosted glass. */}
+          <RoomBlueprint regions={regions} objects={objects} highlightId={hoverId ?? highlightId} onSelect={pickPin} />
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <main className="min-w-0 space-y-5">
-          <SearchPanel onResult={onAnswer} />
-
-          <div className="flex items-center justify-between gap-3">
-            {/* Segmented control: inner radius 8 + padding 4 = outer 12 */}
-            <div role="tablist" aria-label="View" className="inline-flex rounded-xl bg-sunken p-1">
-              {(['list', 'map'] as const).map((key) => (
-                <button
-                  key={key}
-                  role="tab"
-                  aria-selected={view === key}
-                  onClick={() => setView(key)}
-                  className={`h-8 rounded-lg border border-transparent px-4 text-[14px] font-medium transition-[background-color,color] duration-150 ${view === key ? 'bg-surface text-ink shadow-ring' : 'text-muted hover:text-ink'}`}
-                >
-                  {key === 'list' ? 'List' : 'Map'}
-                </button>
-              ))}
+          <div className="frost absolute top-4 left-4 flex max-h-[calc(100%-6rem)] w-[min(340px,calc(100%-2rem))] flex-col sm:top-6 sm:left-6 md:max-h-[calc(100%-3rem)]">
+            <div className="space-y-2 px-5 pt-4 pb-3">
+              <p className="text-[13px] text-muted tabular-nums">{seenCount} of {objects.length} remembered</p>
+              <h1 className="text-3xl leading-none font-semibold">Your room</h1>
+              {health?.sample && <p className="text-[13px] text-muted">Sample data for design work.</p>}
+              {offline && <p className="text-[13px] text-caution">Can&apos;t reach Keepsake. Start the backend to see updates.</p>}
+              {regions.length === 0 && (
+                <div className="space-y-2 pt-1">
+                  <p className="text-[13px] text-muted">No furniture yet. Scan the room so the map can draw it.</p>
+                  <button onClick={startScan} disabled={!canScan} className="press button-primary">
+                    <ScanLine className="size-4" strokeWidth={1.75} /> Scan room
+                  </button>
+                </div>
+              )}
             </div>
-            <span className="text-[13px] text-muted tabular-nums">{seenCount} of {objects.length} remembered</span>
+            <button
+              onClick={() => setItemsOpen((v) => !v)}
+              aria-expanded={itemsOpen}
+              className="flex items-center justify-between px-5 pt-2 pb-1.5 text-[15px] font-semibold"
+            >
+              Items <span className="flex items-center gap-1 text-[13px] font-normal text-muted">{objects.length}
+                <ChevronDown className={`size-4 transition-[rotate] duration-200 ${itemsOpen ? 'rotate-180' : ''}`} />
+              </span>
+            </button>
+            {itemsOpen && (
+              <div className="no-scrollbar min-h-0 overflow-y-auto px-3 pb-3">
+                <ItemPanel objects={objects} activeId={hoverId ?? highlightId} onHover={setHoverId} onOpen={setOpenId} />
+              </div>
+            )}
           </div>
 
-          {view === 'list' ? (
-            <ObjectList objects={objects} now={now} highlightId={highlightId} onOpen={setOpenId} />
-          ) : (
-            <RoomMap
-              regions={regions}
-              objects={objects}
-              highlightId={highlightId}
-              onOpen={setOpenId}
-              onScan={startScan}
-              referenceUrl={health?.reference_ready ? `${api.referenceUrl}?v=${health.view_id}` : null}
-            />
-          )}
+          <div className="frost absolute top-4 right-4 hidden px-4 py-2.5 sm:top-6 sm:right-6 lg:block">
+            <PinLegend />
+          </div>
         </main>
+      )}
 
-        <aside className="space-y-4">
-          <CameraPanel health={health} />
-          <ActivityFeed events={events} />
-          <PrivacyPanel health={health} onChanged={refresh} />
-        </aside>
+      <div className={`mx-auto max-w-6xl px-4 pt-5 pb-28 sm:px-8 sm:pt-8 md:pb-12 ${view === 'map' ? 'hidden' : ''}`}>
+        {health?.sample && (
+          <p className="mb-4 rounded-xl bg-sunken px-4 py-3 text-[14px] text-muted">
+            Sample data for design work. Run <code>npm run dev</code> with the backend for the real room.
+          </p>
+        )}
+        {offline && (
+          <p className="mb-4 rounded-xl bg-caution-soft px-4 py-3 text-caution">
+            Can&apos;t reach Keepsake. Showing the last memories loaded. Start the backend to see updates.
+          </p>
+        )}
+
+        {view === 'list' && (
+          <main className="space-y-5">
+            <h1 className="text-3xl font-semibold">List</h1>
+            <SearchPanel onResult={onAnswer} />
+            <p className="text-[13px] text-muted tabular-nums">{seenCount} of {objects.length} remembered</p>
+            <ObjectList objects={objects} now={now} highlightId={highlightId} onOpen={setOpenId} />
+            <ActivityFeed events={events} />
+          </main>
+        )}
+
+        {view === 'settings' && (
+          <main className="space-y-5">
+            <h1 className="text-3xl font-semibold">Settings</h1>
+            <div className="grid gap-5 lg:grid-cols-2">
+              <CameraPanel health={health} />
+              <div className="space-y-5">
+                <PrivacyPanel health={health} onChanged={refresh} />
+                <button onClick={startScan} disabled={!canScan} className="press button-primary md:hidden">
+                  <ScanLine className="size-4" strokeWidth={1.75} /> Scan room
+                </button>
+              </div>
+            </div>
+          </main>
+        )}
       </div>
 
       {open && <ObjectDetail key={open.object_id} o={open} now={now} onClose={() => setOpenId(null)} />}

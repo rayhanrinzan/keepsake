@@ -71,6 +71,8 @@ export interface Health {
   proposal: ProposedArea[]
   view_id: string
   capture_enabled: boolean
+  /** Only set by the design-only sample server (`npm run dev:sample`). */
+  sample?: boolean
 }
 
 export interface QueryResult {
