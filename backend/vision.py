@@ -239,7 +239,8 @@ class VisionWorker(threading.Thread):
             self.status["error"] = f"Detection error: {e}"
             obs = []
         shown = [o for o in obs if o.category in MIN_CONF and o.confidence >= MIN_CONF[o.category]]
-        self._publish(self._resize(frame, self.preview_width), shown)  # only what memory would accept
+        people = [o for o in obs if o.category == PERSON and o.confidence >= self.presence.min_conf]
+        self._publish(self._resize(frame, self.preview_width), shown, people)  # only what's counted
 
     def _scan(self, model, reference: np.ndarray) -> tuple[bytes | None, list[dict]]:
         """Scan room: detect furniture over the last few (steady) frames and propose areas."""
@@ -329,7 +330,8 @@ class VisionWorker(threading.Thread):
                                    bbox=(x0, y0, x1, y1)))
         return obs
 
-    def _publish(self, frame: np.ndarray, obs: list[Observation]) -> None:
+    def _publish(self, frame: np.ndarray, obs: list[Observation],
+                 people: list[Observation] = ()) -> None:
         h, w = frame.shape[:2]
         out = frame.copy()
         for r in list(self.regions):  # region overlays
@@ -337,13 +339,13 @@ class VisionWorker(threading.Thread):
             cv2.rectangle(out, p0, p1, (235, 235, 235), 1)
             cv2.putText(out, r.name, (p0[0] + 6, p0[1] + 18), cv2.FONT_HERSHEY_SIMPLEX,
                         0.5, (245, 245, 245), 1, cv2.LINE_AA)
-        for o in obs:
-            x0, y0, x1, y1 = o.bbox
+        for o, color in [(p, (230, 160, 60)) for p in people] + [(o, (90, 200, 120)) for o in obs]:
+            x0, y0, x1, y1 = o.bbox  # people in blue, tracked items in green
             p0, p1 = (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h))
-            cv2.rectangle(out, p0, p1, (90, 200, 120), 2)
+            cv2.rectangle(out, p0, p1, color, 2)
             label = f"{display_name(o.category)} {o.confidence:.0%}"
             cv2.putText(out, label, (p0[0], max(14, p0[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5, (90, 200, 120), 1, cv2.LINE_AA)
+                        0.5, color, 1, cv2.LINE_AA)
         if self.modes.mode != MONITORING:
             cv2.rectangle(out, (0, 0), (w, 28), (40, 40, 40), -1)
             cv2.putText(out, "Monitoring paused", (10, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
