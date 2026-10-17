@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Last Seen - dashboard</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--fg:#1c1e22;--mute:#6a7078;--line:#dde0e5;--accent:#2563eb;
+--green:#1f9d55;--blue:#2563eb;--amber:#d98a00;--grey:#7a8088}
+@media (prefers-color-scheme:dark){:root{--bg:#121316;--card:#1c1e23;--fg:#eceef1;--mute:#9aa1ab;
+--line:#2d3138;--accent:#5b8def;--green:#34c070;--blue:#5b8def;--amber:#f0a92a;--grey:#8b929c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+main{max-width:1500px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:minmax(0,3fr) minmax(0,2fr);align-items:start}
+@media (max-width:900px){main{grid-template-columns:minmax(0,1fr)}}
+h1{font-size:20px;margin:0}
+h2{font-size:14px;margin:0 0 8px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.col{display:grid;gap:16px;min-width:0}
+#stream{display:block;width:100%;height:auto;border-radius:8px;background:#000}
+#health{font-size:12px;color:var(--mute);margin-top:8px}
+.hint{color:var(--mute);font-size:13px;margin:8px 0 0}
+.item{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+.item:first-of-type{border-top:0}
+.item .name{font-weight:600;flex:1 1 120px}
+.item .meta{color:var(--mute);font-size:13px;flex:1 1 100%}
+.chip{color:#fff;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600}
+.chip.PLACED{background:var(--green)}.chip.HELD{background:var(--blue)}
+.chip.HIDDEN{background:var(--amber);color:#1c1e22}.chip.CARRIED_OUT,.chip.UNKNOWN{background:var(--grey)}
+form.row{display:flex;gap:8px}
+input,select,button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+input{flex:1;min-width:0}
+button{background:var(--accent);color:#fff;border-color:var(--accent);cursor:pointer}
+button.sec{background:var(--card);color:var(--fg);border-color:var(--line)}
+#answer{margin-top:10px}
+#answer p{margin:0 0 8px;font-size:16px}
+.thumb{width:72px;height:48px;object-fit:cover;border-radius:6px;background:var(--line);flex:none}
+#answer .thumb{width:100%;height:auto;max-width:360px}
+#timeline{list-style:none;margin:0;padding:0}
+#timeline li{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+#timeline li:first-child{border-top:0}
+#timeline .t{flex:1;min-width:0}
+#timeline .t b{font-weight:600}
+#timeline .sub{color:var(--mute);font-size:12px}
+details summary{cursor:pointer;color:var(--mute)}
+details .ctl{display:grid;gap:8px;margin-top:10px}
+#clickarm.on{background:var(--amber);border-color:var(--amber);color:#000}
+#enrollmsg{font-size:13px;color:var(--mute)}
+#settings .ctl{display:grid;gap:8px}
+#voicemsg{font-size:13px;color:var(--mute)}
+.armed{cursor:crosshair}
+.badge{border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600;background:var(--amber);color:#1c1e22}
+.badge.sil{background:var(--grey);color:#fff}
+.item .thumb{order:-1}
+button.dismiss:disabled{opacity:.45;cursor:default}
+#camlost{display:none;background:#c62828;color:#fff;font-weight:600;text-align:center;padding:10px 16px}
+#bigsnap{display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.92);color:#fff;flex-direction:column;
+align-items:center;justify-content:center;gap:16px;padding:16px;cursor:pointer;overflow:auto}
+#bigsnap img{max-width:100%;height:auto;border-radius:8px}
+#bigsnap p{margin:0;font-size:22px;text-align:center}
+</style></head>
+<body>
+<div id="camlost" role="alert">Camera lost — timers paused</div>
+<div id="bigsnap"></div>
+<main>
+<div class="col">
+  <div class="card">
+    <h1>Last Seen</h1>
+    <div style="margin-top:10px"><img id="stream" src="/stream" alt="Live camera"></div>
+    <div id="health">health: loading</div>
+  </div>
+</div>
+<div class="col">
+  <div class="card">
+    <h2>Items</h2>
+    <div id="items"></div>
+    <p class="hint">Pick up an item and put it down to start tracking it.</p>
+  </div>
+  <div class="card">
+    <h2>Ask</h2>
+    <form class="row" id="askform">
+      <input id="q" placeholder="Where are my AirPods?" autocomplete="off" aria-label="Question">
+      <button type="submit">Ask</button>
+    </form>
+    <div id="answer"></div>
+  </div>
+  <div class="card" id="settings" hidden>
+    <h2>Settings</h2>
+    <div class="ctl">
+      <label for="voice">Voice</label>
+      <select id="voice" aria-label="Voice"></select>
+      <button class="sec" id="testvoice" type="button">Test voice</button>
+      <div id="voicemsg"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Timeline</h2>
+    <ul id="timeline"></ul>
+  </div>
+  <div class="card">
+    <details>
+      <summary>Backup controls</summary>
+      <div class="ctl">
+        <select id="enrollitem" aria-label="Item"></select>
+        <button class="sec" id="clickarm" type="button">Click the stream to enroll</button>
+        <button class="sec" id="forget" type="button">Forget selected item</button>
+        <div id="enrollmsg"></div>
+      </div>
+    </details>
+  </div>
+</div>
+</main>
+<script>
+(function(){
+"use strict";
+var KIND={PICKED_UP:"picked up",PLACED:"put down",SEEN:"seen",HIDDEN:"hidden",CARRIED_OUT:"out of view"};
+var STATE={PLACED:"PLACED",HELD:"HELD",HIDDEN:"HIDDEN",CARRIED_OUT:"out of view",UNKNOWN:"not seen"};
+var items={}, events=[], armed=false, wear={}, wearTs=0, camLost=false, cfgIds=null;
+var PHASE={UNTRACKED:"not touched yet",HELD:"in hand",PLACED_VISIBLE:"in view",WITH_YOU:"with you"};
+function mmss(s){s=Math.max(0,Math.floor(s||0));return Math.floor(s/60)+":"+("0"+(s%60)).slice(-2);}
+function thumbOf(id){
+  for(var i=0;i<events.length;i++){if(events[i].item_id===id&&events[i].snapshot_url)return events[i].snapshot_url;}
+  return null;
+}
+var $=function(id){return document.getElementById(id);};
+function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
+function fmt(ts){return ts?new Date(ts*1000).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}):"";}
+function nameOf(id){var i=items[id];return (i&&i.display_name)||id;}
+// Once a wear_status has arrived (wearable mode), rows from earlier sessions that are neither
+// tracked now nor in config are hidden (the DB keeps them).
+function visibleIds(){
+  var ids=Object.keys(items).sort();
+  if(cfgIds===null)return ids;
+  return ids.filter(function(id){return !!wear[id]||cfgIds.indexOf(id)>=0;});
+}
+// No old-session photo on a card the wearer has not touched yet.
+function cardThumb(id){var w=wear[id];return (w&&w.phase==="UNTRACKED")?null:thumbOf(id);}
+
+var lastSig=null, lastIds=null, pending={}, notes={}, noteAt={};
+function renderItems(){
+  var ids=visibleIds();
+  ids.forEach(function(id){
+    var w=wear[id];
+    if(pending[id]!==undefined&&w&&(w.silenced||w.phase!==pending[id]))delete pending[id];
+    var ns=noteAt[id];
+    if(notes[id]&&w&&ns&&(w.phase!==ns[0]||!!w.silenced!==ns[1])){delete notes[id];delete noteAt[id];}
+  });
+  var sig=JSON.stringify(ids.map(function(id){
+    var it=items[id], w=wear[id];
+    return [id,it.display_name,it.state,it.zone,it.last_seen_ts,it.uncertain,cardThumb(id),
+      w?[w.phase,w.silenced,w.asking]:null,pending[id],notes[id]];
+  }));
+  if(sig===lastSig)return;  // nothing visible changed: keep the DOM (and any click in flight) untouched
+  lastSig=sig;
+  var box=$("items");box.textContent="";
+  if(!ids.length){box.appendChild(el("p","hint","No items yet."));}
+  ids.forEach(function(id){
+    var it=items[id], row=el("div","item"), w=wear[id];
+    var th=cardThumb(id);
+    if(th){var im=el("img","thumb");im.src=th;im.alt="latest snapshot";im.loading="lazy";row.appendChild(im);}
+    row.appendChild(el("span","name",it.display_name||id));
+    var st=it.state||"UNKNOWN";
+    row.appendChild(el("span","chip "+st,STATE[st]||st));
+    var meta=[];
+    if(it.zone)meta.push(it.zone);
+    if(it.last_seen_ts)meta.push("last seen "+fmt(it.last_seen_ts));
+    if(it.uncertain)meta.push("unsure");
+    if(w){
+      if(w.phase!=="PLACED_GONE")meta.push(PHASE[w.phase]||w.phase);
+    }
+    if(meta.length)row.appendChild(el("span","meta",meta.join(" · ")));
+    if(w&&w.phase==="PLACED_GONE"){
+      var tm=el("span","meta","out of view "+mmss(w.unseen_s));tm.setAttribute("data-timer",id);row.appendChild(tm);
+    }
+    if(w&&w.asking)row.appendChild(el("span","badge","Asking…"));
+    if(w&&w.silenced)row.appendChild(el("span","badge sil","silenced"));
+    if(w){
+      var b=el("button","dismiss","I know where it is");
+      b.type="button";b.setAttribute("data-item",id);
+      b.disabled=pending[id]!==undefined||!!w.silenced||!(w.phase==="PLACED_GONE"||w.asking);
+      b.addEventListener("click",function(){
+        var i=this.getAttribute("data-item");this.disabled=true;
+        pending[i]=(wear[i]&&wear[i].phase)||"";delete notes[i];
+        post("/api/dismiss",{item_id:i}).then(function(j){
+          if(!j||j.ok!==true){delete pending[i];notes[i]="could not dismiss";noteAt[i]=[(wear[i]&&wear[i].phase)||"",!!(wear[i]&&wear[i].silenced)];renderItems();}
+        }).catch(function(){delete pending[i];notes[i]="could not dismiss";noteAt[i]=[(wear[i]&&wear[i].phase)||"",!!(wear[i]&&wear[i].silenced)];renderItems();});
+      });
+      row.appendChild(b);
+      if(notes[id])row.appendChild(el("span","meta",notes[id]));
+    }
+    box.appendChild(row);
+  });
+  var idKey=JSON.stringify(ids.map(function(id){return [id,nameOf(id)];}));
+  if(idKey!==lastIds){
+    lastIds=idKey;
+    var sel=$("enrollitem"), cur=sel.value;
+    sel.textContent="";
+    ids.forEach(function(id){var o=el("option",null,nameOf(id));o.value=id;sel.appendChild(o);});
+    if(cur)sel.value=cur;
+  }
+}
+
+function eventRow(ev){
+  var li=el("li"), t=el("div","t");
+  var b=el("b",null,nameOf(ev.item_id));
+  t.appendChild(b);
+  t.appendChild(document.createTextNode(" "+(KIND[ev.kind]||ev.kind)));
+  var zone=ev.to_zone||ev.from_zone;
+  t.appendChild(el("div","sub",fmt(ev.ts)+(zone?" · "+zone:"")+(ev.uncertain?" · unsure":"")));
+  if(ev.snapshot_url){
+    var a=el("a");a.href=ev.snapshot_url;a.target="_blank";a.rel="noopener";
+    var im=el("img","thumb");im.src=ev.snapshot_url;im.alt="snapshot";im.loading="lazy";
+    a.appendChild(im);li.appendChild(a);
+  }
+  li.appendChild(t);
+  return li;
+}
+function renderTimeline(){
+  var ul=$("timeline");ul.textContent="";
+  events.slice(0,50).forEach(function(ev){ul.appendChild(eventRow(ev));});
+}
+
+function loadAll(){
+  fetch("/api/items").then(function(r){return r.json();}).then(function(l){
+    items={};l.forEach(function(i){items[i.id]=i;});renderItems();renderTimeline();
+  }).catch(function(){});
+  fetch("/api/events?n=50").then(function(r){return r.json();}).then(function(l){
+    events=l;renderTimeline();
+  }).catch(function(){});
+}
+
+var delay=1000;
+function connect(){
+  var ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");
+  ws.onopen=function(){delay=1000;loadAll();};
+  ws.onmessage=function(m){
+    var d;try{d=JSON.parse(m.data);}catch(e){return;}
+    if(d.type==="item_update"&&d.item){items[d.item.id]=d.item;renderItems();renderTimeline();}
+    else if(d.type==="event"&&d.event){
+      if(!events.some(function(e){return e.id===d.event.id;})){events.unshift(d.event);events=events.slice(0,50);renderTimeline();}
+    }else if(d.type==="show_answer"&&d.answer){showAnswer(d.answer);if(d.answer.snapshot_url)showBig(d.answer);}
+    else if(d.type==="wear_status"){
+      wear={};(d.items||[]).forEach(function(w){wear[w.id]=w;});
+      cfgIds=Array.isArray(d.config_ids)?d.config_ids:[];
+      camLost=!!d.camera_lost;wearTs=Date.now();renderItems();updateTimers();updateCam();
+    }
+    else if(d.type==="enroll_status"){$("enrollmsg").textContent=(d.stage||"")+(d.message?": "+d.message:"");}
+  };
+  ws.onclose=function(){setTimeout(connect,delay);delay=Math.min(5000,delay*2);};
+  ws.onerror=function(){try{ws.close();}catch(e){}};
+}
+
+function updateTimers(){
+  var ts=document.querySelectorAll("[data-timer]");
+  for(var i=0;i<ts.length;i++){
+    var w=wear[ts[i].getAttribute("data-timer")];
+    if(w)ts[i].textContent="out of view "+mmss(w.unseen_s);
+  }
+}
+function updateCam(){
+  $("camlost").style.display=(camLost&&Date.now()-wearTs<3000)?"block":"none";
+}
+setInterval(updateCam,1000);
+var bigTimer=null;
+function closeBig(){var b=$("bigsnap");b.style.display="none";b.textContent="";if(bigTimer){clearTimeout(bigTimer);bigTimer=null;}}
+$("bigsnap").addEventListener("click",closeBig);
+function showBig(a){
+  var b=$("bigsnap");b.textContent="";
+  var im=el("img");im.src=a.snapshot_url;im.alt=a.display_name||"snapshot";
+  b.appendChild(im);b.appendChild(el("p",null,a.text||""));
+  b.style.display="flex";
+  if(bigTimer)clearTimeout(bigTimer);
+  bigTimer=setTimeout(closeBig,60000);
+}
+function showAnswer(a){
+  var box=$("answer");box.textContent="";
+  box.appendChild(el("p",null,a.text||""));
+  if(a.snapshot_url){
+    var im=el("img","thumb");im.src=a.snapshot_url;im.alt="snapshot";
+    var l=el("a");l.href=a.snapshot_url;l.target="_blank";l.rel="noopener";l.appendChild(im);box.appendChild(l);
+  }
+}
+$("askform").addEventListener("submit",function(e){
+  e.preventDefault();
+  var q=$("q").value.trim();if(!q)return;
+  fetch("/api/ask",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({question:q,source:"dashboard"})})
+  .then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
+  .then(showAnswer)
+  .catch(function(){var b=$("answer");b.textContent="";b.appendChild(el("p",null,"Could not get an answer."));});
+});
+
+function post(url,body){
+  return fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+    .then(function(r){
+      return r.json().catch(function(){return {};}).then(function(j){
+        if(!r.ok)throw new Error((j&&(j.detail||j.error||j.message))||("HTTP "+r.status));
+        return j;
+      });
+    });
+}
+function why(e){return e&&e.message?": "+e.message:"";}
+$("clickarm").addEventListener("click",function(){
+  armed=!armed;this.classList.toggle("on",armed);$("stream").classList.toggle("armed",armed);
+  this.textContent=armed?"Now click the item in the stream":"Click the stream to enroll";
+});
+$("stream").addEventListener("click",function(e){
+  if(!armed)return;
+  var id=$("enrollitem").value;if(!id)return;
+  var r=this.getBoundingClientRect();
+  var x=Math.round((e.clientX-r.left)*(this.naturalWidth/r.width));
+  var y=Math.round((e.clientY-r.top)*(this.naturalHeight/r.height));
+  $("enrollmsg").textContent="enrolling...";
+  post("/api/enroll/click",{item_id:id,display_name:nameOf(id),x:x,y:y})
+    .then(function(j){$("enrollmsg").textContent=j.ok===false?"failed: "+(j.message||j.error||""):"enroll sent";})
+    .catch(function(e){$("enrollmsg").textContent="enroll failed"+why(e);});
+});
+$("forget").addEventListener("click",function(){
+  var id=$("enrollitem").value;if(!id)return;
+  post("/api/forget",{item_id:id}).then(function(j){
+    if(!j||j.ok!==true){$("enrollmsg").textContent="forget failed: "+((j&&(j.error||j.message))||"server said no");return;}
+    $("enrollmsg").textContent="forgot "+nameOf(id);loadAll();
+  }).catch(function(e){$("enrollmsg").textContent="forget failed"+why(e);});
+});
+
+var healthBusy=false;
+function health(){
+  if(healthBusy)return;  // skip this tick while the last request is still in flight
+  healthBusy=true;
+  var ctl=window.AbortController?new AbortController():null;
+  var timer=ctl?setTimeout(function(){ctl.abort();},1500):null;
+  fetch("/health",ctl?{signal:ctl.signal}:{}).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();}).then(function(h){
+    var f=function(v,d){return v==null?"-":(typeof v==="number"?v.toFixed(d):String(v));};
+    $("health").textContent="camera "+f(h.camera_fps,1)+" fps"+(h.camera_ok?"":" (down)")+
+      " · vision "+f(h.vision_tps,1)+" tps · mic "+f(h.mic)+" · chalk "+f(h.chalk);
+  }).catch(function(){$("health").textContent="health: unreachable";})
+  .then(function(){healthBusy=false;if(timer)clearTimeout(timer);});
+}
+health();setInterval(health,2000);
+function renderSettings(st){
+  var sel=$("voice");sel.textContent="";
+  st.voices.forEach(function(v){
+    var o=el("option",null,v.label);o.value=v.id;o.disabled=!!v.disabled;sel.appendChild(o);
+  });
+  sel.value=st.voice;
+  $("voicemsg").textContent=st.grok?"":"Grok voices need XAI_API_KEY in .env (then restart).";
+  $("settings").hidden=false;
+}
+function loadSettings(){
+  fetch("/api/settings").then(function(r){if(!r.ok)throw new Error();return r.json();})
+    .then(renderSettings).catch(function(){$("settings").hidden=true;});
+}
+$("voice").addEventListener("change",function(){
+  var v=this.value;
+  post("/api/settings",{voice:v}).then(function(st){
+    renderSettings(st);$("voicemsg").textContent=st.ok?"voice saved":"that voice isn't available";
+  }).catch(function(e){$("voicemsg").textContent="could not save"+why(e);});
+});
+$("testvoice").addEventListener("click",function(){
+  post("/api/settings/test_voice",{}).then(function(){$("voicemsg").textContent="speaking…";})
+    .catch(function(e){$("voicemsg").textContent="could not speak"+why(e);});
+});
+loadAll();connect();loadSettings();
+})();
+</script>
+</body></html>

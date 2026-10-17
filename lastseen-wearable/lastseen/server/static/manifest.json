@@ -1,0 +1,9 @@
+{
+  "name": "Last Seen",
+  "short_name": "Last Seen",
+  "start_url": "/frame",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#050505",
+  "theme_color": "#050505"
+}

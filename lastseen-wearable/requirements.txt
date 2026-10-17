@@ -1,0 +1,39 @@
+# Last Seen: everything `python -m lastseen` and the tests import (Python 3.11+, macOS on Apple silicon).
+# Install into a fresh venv: uv venv && uv pip install -r requirements.txt
+
+# vision
+ultralytics                # YOLO-World detector, YOLO person tracker
+lap>=0.5.12                # tracker assignment (ultralytics)
+mediapipe                  # hand landmarks
+opencv-contrib-python      # same cv2 mediapipe pulls in; one cv2 package only
+numpy
+supervision
+shapely
+torch
+torchvision                # needed by OpenAI CLIP
+clip @ git+https://github.com/openai/CLIP.git   # CLIP ViT-B/32 image/text embeddings
+ftfy                       # CLIP tokenizer
+regex                      # CLIP tokenizer
+Pillow                     # CLIP preprocessing
+
+# server
+fastapi
+uvicorn[standard]
+pydantic>=2
+pyyaml
+
+# answers
+openai                     # Chalk AI Router client (OpenAI-compatible)
+httpx                      # Chalk client timeouts; also FastAPI TestClient
+rapidfuzz
+python-dotenv
+
+# voice
+faster-whisper             # local speech-to-text
+sounddevice                # mic capture
+
+# macOS
+pyobjc-framework-AVFoundation  # camera lookup by name
+
+# tests
+pytest

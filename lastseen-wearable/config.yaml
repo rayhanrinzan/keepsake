@@ -1,0 +1,94 @@
+camera:
+  source: "iPhone"   # camera by name (Continuity Camera); a number or a video file path also work
+  width: 1280
+  fps_target: 8
+  replay_video: null
+  mode: wearable         # wearable: camera on the person (lost-sight flow); fixed: wall-mounted camera
+                         # back to fixed: also set features.people_tracking and touch_to_track to true
+
+items:
+  - id: airpods
+    display_name: AirPods
+    prompt: "airpods case"
+    extra_prompts: ["white earbuds case", "small white plastic case", "earbuds"]
+    synonyms: [airpods, air pods, earbuds, earpods, headphones, airpods case]
+    critical: false
+    enabled: true
+  - id: water_bottle
+    display_name: water bottle
+    prompt: "water bottle"
+    extra_prompts: [bottle, reusable bottle, drink bottle]
+    synonyms: [water bottle, bottle, my bottle, water]
+    critical: false
+    enabled: false
+  - id: wallet
+    display_name: wallet
+    prompt: "wallet"
+    extra_prompts: [leather wallet, billfold, card holder]
+    synonyms: [wallet, my wallet, billfold, purse]
+    critical: false
+    enabled: false
+  - id: keys
+    display_name: keys
+    prompt: "keys"
+    extra_prompts: [keychain, car keys, key ring]
+    synonyms: [keys, key, keychain, car keys, my keys]
+    critical: false
+    enabled: false
+  - id: glasses
+    display_name: glasses
+    prompt: "glasses"
+    extra_prompts: [eyeglasses, sunglasses, glasses case]
+    synonyms: [glasses, eyeglasses, sunglasses, specs, my glasses]
+    critical: false
+    enabled: false
+
+generic_prompts: ["cell phone", "remote", "white box"]
+
+detector:
+  conf: 0.001
+  imgsz: 1280
+  every_n: 3             # fixed mode only; wearable mode runs the detector every tick (seen-again needs it)
+  max_area_frac: 0.25
+  model: models/yolov8s-worldv2.pt
+
+identity:
+  sim_thresh: 0.70
+
+engine:
+  held_frames: 3
+  placed_frames: 6
+  missing_frames: 10
+
+features:
+  voice: true
+  memory_frame: true
+  chalk_llm: true
+  fake_tracker: false
+  search_sense: false
+  photon: false
+  people_tracking: false  # person detector for "carried out of view"; false -> frame-edge fallback
+  touch_to_track: false
+  lost_sight_ask: true
+
+wearable:
+  ask_after_s: 10         # seconds of "not seen" before the room asks where the item went (demo; real life: minutes)
+  group_window_s: 5       # items due within this many seconds of each other share one question
+  reply_window_s: 8       # how long after asking we accept a yes/no answer
+  touch_s: 0.5            # hand contact this long counts as touching an item
+  placed_hits: 3          # hand-free sightings after a touch that count as "put down" (gaps allowed)
+  seen_again_hits: 3      # sightings needed before an item counts as back
+  seen_again_window_s: 1.0
+  stale_frame_s: 1.0      # frames older than this are ignored
+  best_frame_window_s: 5.0
+
+server:
+  port: 8000              # LASTSEEN_PORT overrides
+  lan_dashboard: false    # true: dashboard, /stream, /health.html, POST /api/* reachable from the LAN
+
+debug:
+  enroll_diagnostics: false  # annotated jpg in data/clips when enrollment can't find the item
+
+people:
+  user_name: "Mom"
+  caregiver_name: "Anna"
