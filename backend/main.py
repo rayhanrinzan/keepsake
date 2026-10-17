@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from catalog import CATALOG
 from database import Database
-from departure import DepartureFeed
+from departure import DepartureFeed, DeparturePresence
 from departure_api import departure_router
 from memory import SpatialMemory, answer_query, parse_query
 from modes import ModeController, ModeError
@@ -59,6 +59,7 @@ async def lifespan(_: FastAPI):
         worker = VisionWorker(memory, regions, snapshots, modes,
                               camera_index=int(source) if source.isdigit() else source,
                               camera_name=env("CAMERA_NAME", "") or None,  # e.g. iPhone; wins over the index
+                              presence=DeparturePresence(),  # also follows one person for Departure Alerts
                               model_path=env("MODEL", DEFAULT_MODEL),
                               # candidate cutoff; each item then needs its own min_conf (catalog.py)
                               conf=float(env("DETECT_CONFIDENCE", DEFAULT_CONF)),

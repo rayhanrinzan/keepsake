@@ -10,7 +10,7 @@ on the last observation, never claims that something was forgotten.
 
 ```
 backend (Python)                                     integrations/photon (TypeScript)
-presence.py "left" ─► departure.py ─► GET /api/departures ◄─ poll ─ departures.ts
+tracked person ─► departure.py   ─► GET /api/departures ◄─ poll ─ departures.ts
                                       GET /api/objects, /context ──► alerts.ts (eligibility)
                                                                   ─► notifier.ts ─► Photon ─► iMessage
                                       POST /api/query ◄── inbound.ts ◄── replies from your phone
@@ -51,16 +51,22 @@ ids, per-item cooldowns and the pause flag (no phone numbers or message text).
 
 ## Automatic departures
 
-Departures come from the vision worker's `PresenceTracker` (`backend/presence.py`, the same signal
-behind the app's "Are you looking for something?" prompt): someone was seen for 3 frames in a row,
-then nobody for 2 s. So a departure means the room went from occupied to empty. With several people
-in view nothing fires until everyone is gone, and there is no face or identity recognition.
+Departure Alerts follows **one person**, so it works with a crowd in view. The vision worker's
+`PresenceTracker` is given a `DeparturePresence` (backend/departure.py) that also runs a
+`TargetTracker`:
 
-Departures are dropped while the view can't be trusted: Scan room, a camera shift (10 s), dark
-frames or a camera error, because then people "vanish" without leaving. Check the live state with:
+- **Lock on:** the largest person box (usually the closest), seen 3 frames in a row.
+- **Follow:** by ByteTrack id; if the id changes after an occlusion, a *new* box at the same spot
+  takes over. People already in view beside the target never do.
+- **Departure:** the target unseen for 3 s. Everyone else coming and going is ignored. Afterwards
+  it locks onto the next closest person.
+
+The app's own "Are you looking for something?" presence prompt is unchanged. There is no face or
+identity recognition. Departures are dropped while the view can't be trusted: Scan room, a camera
+shift (10 s), dark frames or a camera error. Watch it live:
 
 ```sh
-curl http://127.0.0.1:8000/api/departures/context   # hold reason, person_present, suppressed count
+curl http://127.0.0.1:8000/api/departures/context   # target box, people tracked, hold, suppressed
 ```
 
 ## Manual test

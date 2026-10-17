@@ -38,7 +38,9 @@ def departure_router(feed: DepartureFeed, db, memory, modes, regions, get_worker
                   for o in db.get_objects() if o.get("region")}
         return {"camera": status.get("camera"), "mode": modes.mode, "view_id": memory.view_id,
                 "hold": None if status.get("camera") == "disabled" else hold, "places": places,
-                "person_present": status.get("person_present"), "feed": feed.status()}
+                "person_present": status.get("person_present"),
+                "target": {k: status.get(k) for k in ("target_tracking", "target_box", "people_tracked")},
+                "feed": feed.status()}
 
     @r.post("/simulate")
     def simulate(x_keepsake_local: str | None = Header(default=None)):
