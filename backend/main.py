@@ -283,6 +283,19 @@ def put_regions(body: RegionsIn):
 
 # ---------- live camera ----------
 
+@app.get("/api/camera/frame")
+def camera_frame():
+    """Newest annotated frame as a single JPEG (kept in memory only). The dashboard polls this;
+    short requests recover on their own where a long-lived MJPEG stream can stall in the browser."""
+    if worker is None:
+        raise HTTPException(503, "Camera disabled")
+    frame_id, jpg = worker.latest_frame()
+    if jpg is None:
+        raise HTTPException(503, "No frame yet")
+    return Response(jpg, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store", "X-Frame-Id": str(frame_id)})
+
+
 @app.get("/api/camera")
 async def camera():
     """MJPEG stream of the annotated live frame (kept in memory only)."""

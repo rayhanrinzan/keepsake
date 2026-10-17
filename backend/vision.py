@@ -96,6 +96,7 @@ class VisionWorker(threading.Thread):
         self._shift_frames = 0
         self._halt = threading.Event()
         self._jpeg: bytes | None = None
+        self._jpeg_id = 0
         self._jpeg_lock = threading.Lock()
         self.status = {"camera": "starting", "error": None, "warning": None, "fps": 0.0,
                        "device": self.device, "inference_width": frame_width,
@@ -105,6 +106,11 @@ class VisionWorker(threading.Thread):
     def latest_jpeg(self) -> bytes | None:
         with self._jpeg_lock:
             return self._jpeg
+
+    def latest_frame(self) -> tuple[int, bytes | None]:
+        """(frame number, annotated JPEG) of the newest processed frame."""
+        with self._jpeg_lock:
+            return self._jpeg_id, self._jpeg
 
     def stop(self) -> None:
         self._halt.set()
@@ -305,6 +311,7 @@ class VisionWorker(threading.Thread):
         if jpg:
             with self._jpeg_lock:
                 self._jpeg = jpg
+                self._jpeg_id = self._frame_id
         self.status["detections"] = [
             {"category": o.category, "name": display_name(o.category),
              "confidence": round(o.confidence, 2), "track_id": o.track_id} for o in obs]
