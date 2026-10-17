@@ -38,6 +38,9 @@ npm --prefix frontend run build
 ## Conventions
 - Never fabricate detections, photos or locations in live mode. Synthetic data belongs only in tests.
 - Never commit DBs, photos, frames or weights (`backend/data/` and `*.pt` are git-ignored).
+  **One exception:** `backend/models/items.pt`, our trained items model, is committed so the team shares it
+  (agreed for the hackathon, PR #10). Keep it the only weights file in git; downloadable models
+  (YOLO-World, yolo11, `hand_landmarker.task`) stay ignored.
 - Re-observing an item from a new camera view is `reconfirmed`, never a movement event.
 - Work happens on feature branches. Don't push to main or merge without approval.
 
