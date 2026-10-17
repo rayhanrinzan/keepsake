@@ -1,43 +1,45 @@
 @import "tailwindcss";
 
-/* Keepsake: warm paper neutrals with a terracotta accent. System fonts only (no network fonts). */
+/* Keepsake design tokens. System fonts only (no network requests). */
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-serif: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
-  --color-paper: oklch(0.975 0.008 75);
-  --color-card: oklch(0.995 0.004 75);
-  --color-ink: oklch(0.27 0.02 50);
-  --color-muted: oklch(0.5 0.02 55);
-  --color-line: oklch(0.9 0.012 70);
-  --color-clay-50: oklch(0.96 0.025 45);
-  --color-clay-100: oklch(0.92 0.045 45);
-  --color-clay-500: oklch(0.62 0.14 40);
-  --color-clay-600: oklch(0.55 0.14 38);
-  --color-clay-700: oklch(0.47 0.12 36);
-  --color-sage-50: oklch(0.96 0.03 150);
-  --color-sage-600: oklch(0.5 0.09 155);
-  --color-sage-700: oklch(0.43 0.08 155);
-  --color-amber-ink: oklch(0.5 0.1 70);
-  --shadow-card: 0 1px 2px oklch(0.3 0.03 50 / 0.06), 0 2px 8px oklch(0.3 0.03 50 / 0.05);
-  --shadow-lift: 0 2px 4px oklch(0.3 0.03 50 / 0.06), 0 12px 32px oklch(0.3 0.03 50 / 0.12);
-  --ease-out-soft: cubic-bezier(0.2, 0, 0, 1);
+  --color-canvas: oklch(0.982 0.002 90);
+  --color-surface: oklch(1 0 0);
+  --color-sunken: oklch(0.962 0.003 90);
+  --color-ink: oklch(0.21 0.005 90);
+  --color-muted: oklch(0.5 0.006 90);
+  --color-faint: oklch(0.68 0.006 90);
+  --color-hairline: oklch(0.9 0.004 90);
+  --color-live: oklch(0.56 0.13 150);
+  --color-live-soft: oklch(0.96 0.03 150);
+  --color-caution: oklch(0.52 0.11 65);
+  --color-caution-soft: oklch(0.97 0.03 80);
+  --color-danger: oklch(0.52 0.17 27);
+  /* Elevation: hairline ring + soft drop. Pair with `border border-transparent` for forced-colors. */
+  --shadow-ring: 0 0 0 1px oklch(0 0 0 / 0.06), 0 1px 2px oklch(0 0 0 / 0.04);
+  --shadow-raised: 0 0 0 1px oklch(0 0 0 / 0.06), 0 2px 4px oklch(0 0 0 / 0.04), 0 8px 20px oklch(0 0 0 / 0.06);
+  --shadow-overlay: 0 0 0 1px oklch(0 0 0 / 0.06), 0 12px 24px oklch(0 0 0 / 0.1), 0 32px 64px oklch(0 0 0 / 0.12);
 }
 
 :root { color-scheme: light; }
 html, body, #root { min-height: 100%; }
-body { @apply bg-paper font-sans text-ink antialiased; -webkit-tap-highlight-color: transparent; }
+body { @apply bg-canvas font-sans text-[15px] text-ink antialiased; -webkit-tap-highlight-color: transparent; }
 
-/* Infrequent entrance (dialogs, first load). Exits are handled by unmounting. */
+/* Surfaces */
+.card { @apply rounded-2xl border border-transparent bg-surface shadow-ring; }
+
+/* Press feedback: 0.96 over 150ms ease-out, never when disabled. */
+.press { transition-property: scale, background-color, color, box-shadow; transition-duration: 150ms; transition-timing-function: ease-out; }
+.press:not(:disabled):active { scale: 0.96; }
+
+/* Infrequent entrances only (dialogs). Reduced motion gets an opacity fade. */
 @media (prefers-reduced-motion: no-preference) {
   @keyframes enter { from { opacity: 0; filter: blur(4px); translate: 0 12px; } }
   .enter { animation: enter 300ms ease-out both; }
-  @keyframes ring { 0% { scale: 1; opacity: .55 } 100% { scale: 2.2; opacity: 0 } }
-  .pulse-ring { animation: ring 1.6s cubic-bezier(0, 0, .2, 1) infinite; }
+  @keyframes listening { 0% { scale: 1; opacity: 0.5 } 100% { scale: 1.6; opacity: 0 } }
+  .listening-ring { animation: listening 1.4s ease-out infinite; }
 }
 @media (prefers-reduced-motion: reduce) {
   @keyframes fade { from { opacity: 0 } }
   .enter { animation: fade 200ms ease-out both; }
 }
-
-.press { transition-property: scale, background-color, color, box-shadow; transition-duration: 150ms; transition-timing-function: ease-out; }
-.press:not(:disabled):active { scale: 0.96; }

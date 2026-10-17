@@ -35,12 +35,18 @@ export const fullTime = (iso: string) =>
     weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   })
 
-export const placeName = (region: string) => (region === 'Elsewhere' ? 'Elsewhere in the room' : region)
+/** Display form of a location label from the backend ("Couch", "Near Couch", "Left side"). */
+export function placeName(label: string) {
+  if (label === 'Left side' || label === 'Right side') return `${label} of the room`
+  if (label === 'Middle') return 'Middle of the room'
+  if (label.startsWith('Near ')) return `Near the ${label.slice(5).toLowerCase()}`
+  return label
+}
 
 /** Short human status used on cards and the detail view. */
 export function statusLabel(o: TrackedObject): { label: string; tone: 'live' | 'past' | 'none' | 'warn' } {
   if (o.status === 'never') return { label: 'Not yet seen', tone: 'none' }
-  if (o.awaiting_reconfirmation) return { label: 'Camera moved · not rechecked', tone: 'warn' }
+  if (o.awaiting_reconfirmation) return { label: 'Not rechecked since scan', tone: 'warn' }
   if (o.moving) return { label: 'Being moved', tone: 'warn' }
   if (o.visible) return { label: 'In view now', tone: 'live' }
   return { label: 'Out of view', tone: 'past' }

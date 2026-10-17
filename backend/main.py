@@ -51,7 +51,8 @@ async def lifespan(_: FastAPI):
                               camera_index=int(source) if source.isdigit() else source,
                               model_path=env("MODEL", str(HERE / "models" / "yolo11n.pt")),
                               conf=float(env("CONFIDENCE", "0.4")),
-                              fps=float(env("INFERENCE_FPS", "5")))
+                              fps=float(env("INFERENCE_FPS", "5")),
+                              scan_model_path=env("SCAN_MODEL", str(HERE / "models" / "yolo11m.pt")))
         worker.start()
     yield
     if worker:
@@ -286,6 +287,24 @@ async def camera():
     return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
+def port_free(host: str, port: int) -> bool:
+    import socket
+    with socket.socket() as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # as uvicorn does; still fails if listening
+        try:
+            s.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
 if __name__ == "__main__":
+    import sys
+
     import uvicorn
-    uvicorn.run(app, host=env("HOST", "127.0.0.1"), port=int(env("PORT", "8000")))
+    host, port = env("HOST", "127.0.0.1"), int(env("PORT", "8000"))
+    # uvicorn starts the camera worker before binding; a second copy must not run the camera at all.
+    if not port_free(host, port):
+        sys.exit(f"Keepsake is already running on {host}:{port}. Stop it first (Ctrl+C in its window).")
+    # The live MJPEG stream never ends on its own; don't let it block shutdown (and keep the camera on).
+    uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=3)

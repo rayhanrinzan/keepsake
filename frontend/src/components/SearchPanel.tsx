@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { LoaderCircle, Mic, Search, Square, Volume2 } from 'lucide-react'
+import { LoaderCircle, Mic, Search, Square } from 'lucide-react'
 import { api, ApiError } from '../lib/api'
 import type { QueryResult } from '../lib/api'
 import { listenOnce, speak, speechInputSupported, stopVoice, VoiceError } from '../lib/voice'
@@ -9,9 +9,9 @@ type Phase = 'IDLE' | 'PROMPTING' | 'LISTENING' | 'LOOKING_UP' | 'RESPONDING'
 
 const PHASE_LABEL: Record<Phase, string> = {
   IDLE: '',
-  PROMPTING: 'Asking…',
-  LISTENING: 'Listening… say the item, like “my water bottle”',
-  LOOKING_UP: 'Checking my memory…',
+  PROMPTING: 'Asking what you’re looking for…',
+  LISTENING: 'Listening. Say the item, like “my water bottle”.',
+  LOOKING_UP: 'Checking memory…',
   RESPONDING: 'Answering…',
 }
 
@@ -34,7 +34,7 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
       if (id !== run.current) return
       const msg = e instanceof ApiError && e.status === 0
         ? "I can't reach Keepsake's memory right now. Check that the backend is running."
-        : "Something went wrong looking that up."
+        : 'Something went wrong looking that up.'
       setError(msg)
       setPhase('IDLE')
       if (spoken) await speak(msg)
@@ -54,11 +54,11 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
     setAnswer(null)
     setHeard('')
     if (!speechInputSupported) {
-      setError("Voice isn't available in this browser. Type what you're looking for instead (Chrome, Edge and Safari support voice).")
+      setError("Voice isn't available in this browser. Type instead, or use Chrome, Edge or Safari.")
       return
     }
     setPhase('PROMPTING')
-    await speak('What are you looking for?') // wait for the prompt to finish before opening the mic
+    await speak('What are you looking for?') // the mic opens only after the prompt finishes
     if (id !== run.current) return
     setPhase('LISTENING')
     let said: string
@@ -68,8 +68,7 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
       if (id !== run.current) return
       const ve = e instanceof VoiceError ? e : new VoiceError('other', 'Voice input stopped unexpectedly.')
       if (ve.code === 'aborted') return
-      const msg = ve.code === 'no-speech' ? "I didn't hear anything. Tap Voice to try again." : ve.message
-      setError(msg)
+      setError(ve.code === 'no-speech' ? "I didn't hear anything. Press Voice to try again." : ve.message)
       setPhase('IDLE')
       if (ve.code === 'no-speech') await speak("I didn't hear anything.")
       return
@@ -99,56 +98,42 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
   const listening = phase === 'LISTENING'
 
   return (
-    <section className="rounded-[28px] bg-card p-5 shadow-card sm:p-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+    <section className="card rounded-[24px] p-3">{/* outer 24 = input 12 + padding 12 */}
+      <div className="flex gap-2">
         <button
           onClick={busy ? stop : startVoice}
-          aria-label={busy ? 'Stop voice assistant' : 'Ask Keepsake by voice'}
-          className={[
-            'press relative flex min-h-16 shrink-0 items-center justify-center gap-3 rounded-full px-7 text-lg font-semibold text-white',
-            busy ? 'bg-ink hover:bg-stone-800' : 'bg-clay-600 shadow-lift hover:bg-clay-700',
-          ].join(' ')}
+          aria-label={busy ? 'Stop voice assistant' : 'Ask by voice'}
+          className="press relative flex h-12 shrink-0 items-center gap-2 rounded-xl bg-ink pr-5 pl-4 font-medium text-white hover:bg-ink/85"
         >
-          {listening && <span className="pulse-ring absolute inset-0 rounded-full bg-clay-500/50" />}
-          {busy ? <Square className="relative size-5 fill-current" /> : <Mic className="relative size-6" />}
-          <span className="relative">{busy ? 'Stop' : 'Voice'}</span>
+          {listening && <span aria-hidden className="listening-ring absolute inset-0 rounded-xl bg-ink/40" />}
+          {busy ? <Square className="relative size-4 fill-current" strokeWidth={1.75} /> : <Mic className="relative size-[18px]" strokeWidth={1.75} />}
+          <span className="relative">{listening ? 'Listening' : busy ? 'Stop' : 'Voice'}</span>
         </button>
 
-        <form onSubmit={submitTyped} className="relative flex-1">
+        <form onSubmit={submitTyped} className="relative min-w-0 flex-1">
           <label htmlFor="ask" className="sr-only">Ask where something is</label>
-          <Search className="pointer-events-none absolute top-1/2 left-4 size-5 -translate-y-1/2 text-stone-400" />
+          <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-faint" strokeWidth={1.75} />
           <input
             id="ask"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Or type: where is my phone?"
-            className="min-h-14 w-full rounded-full border border-line bg-paper pr-24 pl-12 text-base outline-none placeholder:text-stone-400 focus:border-clay-500 focus:ring-3 focus:ring-clay-500/20"
+            placeholder="Where is my phone?"
+            className="h-12 w-full rounded-xl border border-hairline bg-canvas pr-3 pl-10 outline-none placeholder:text-faint focus:border-ink/40 focus:bg-surface"
           />
-          <button
-            type="submit"
-            className="press absolute top-1/2 right-2 min-h-10 -translate-y-1/2 rounded-full bg-stone-100 px-4 text-sm font-medium hover:bg-stone-200"
-          >
-            Find
-          </button>
         </form>
       </div>
 
       {(busy || answer || error || heard) && (
-        <div className="mt-4 space-y-2" aria-live="polite">
+        <div className="space-y-1 px-1 pt-3 pb-1" aria-live="polite">
           {busy && (
-            <p className="flex items-center gap-2 text-[15px] text-muted">
-              {phase === 'LOOKING_UP' && <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />}
+            <p className="flex items-center gap-2 text-[14px] text-muted">
+              {phase === 'LOOKING_UP' && <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" strokeWidth={1.75} />}
               {PHASE_LABEL[phase]}
             </p>
           )}
-          {heard && <p className="text-[15px]"><span className="text-muted">You said: </span>“{heard}”</p>}
-          {answer && phase !== 'LOOKING_UP' && (
-            <p className="enter flex items-start gap-3 rounded-2xl bg-clay-50 p-4 font-serif text-xl leading-snug text-ink">
-              <Volume2 className="mt-1 size-5 shrink-0 text-clay-600" />
-              {answer}
-            </p>
-          )}
-          {error && <p className="rounded-2xl bg-amber-50 p-3 text-[15px] text-amber-ink">{error}</p>}
+          {heard && <p className="text-[14px] text-muted">You said “{heard}”</p>}
+          {answer && phase !== 'LOOKING_UP' && <p className="text-[17px] leading-snug font-medium">{answer}</p>}
+          {error && <p className="text-[14px] text-caution">{error}</p>}
         </div>
       )}
     </section>

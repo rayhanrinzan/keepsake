@@ -9,7 +9,7 @@ Built for HackHarvard 2026. Everything runs on your own computer.
 ## How it works
 
 ```
-camera ─► OpenCV ─► YOLO11n + ByteTrack ─► region (Desk / Dresser / Bed)
+camera ─► OpenCV ─► YOLO11n + ByteTrack ─► area (from Scan room: Bed, Couch, Chair 1, …)
             │                                  │
             └─ frame differencing (motion) ────┤
                                                ▼
@@ -22,6 +22,7 @@ camera ─► OpenCV ─► YOLO11n + ByteTrack ─► region (Desk / Dresser / 
 
 - **Detection:** pretrained Ultralytics YOLO11n (COCO classes) on the CPU at about 5 fps. There's no training, no cloud vision, and no YOLO-World.
 - **Tracked items** (in [backend/catalog.py](backend/catalog.py)): Phone, Water Bottle, Laptop, Cup, Book, Backpack, Remote, Mouse. The app assumes one of each.
+- **Room areas come from Scan room**, not a fixed layout. Keepsake runs the larger YOLO11m model over a few steady frames and proposes an area for each piece of furniture it reliably sees: bed, couch, chair, table, TV, sink, fridge, oven, microwave, toilet and bench. You review the proposal and can rename ("Table" → "Desk"), resize, delete or add areas (COCO has no dresser, shelf or ottoman class). An item gets the most specific area it sits in, "near the <area>" if it's just outside one, or the left/middle/right of the room if there are no areas.
 - **When a photo is taken:** an item must be seen first (first sighting), moved to another area, or moved more than `CTRLF_MOVE_THRESHOLD` (6% of the frame) within the same area. It must then **settle**: stay within a small radius for `CTRLF_SETTLE_SECONDS` (0.8 s) and at least `CTRLF_STABILITY_FRAMES` frames, with little motion around it. Only then does Keepsake update the location and save a photo. It picks the clearest frame from that settled window, skipping frames where a detected person covers the item.
 - **What doesn't trigger a photo:** someone walking past, jitter, an item picked up and put back in the same spot, or a brief misdetection.
 - **Leaving view:** the last confirmed place and photo are kept, and the item shows **Out of view**. If it was mid-move when it vanished, Keepsake says so instead of claiming it's still there.
@@ -36,7 +37,7 @@ python3.12 -m venv .venv            # or: uv venv --python 3.12 .venv
 npm --prefix frontend install
 ```
 
-The YOLO weights (`yolo11n.pt`, about 5 MB) download into `backend/models/` on first run.
+The YOLO weights download into `backend/models/` on first use: `yolo11n.pt` (about 5 MB) for tracking, and `yolo11m.pt` (about 40 MB) the first time you scan the room.
 
 ## Run
 
@@ -71,12 +72,12 @@ For Continuity Camera, keep the iPhone locked and still, with its **back** camer
 - **List (home):** every item, with its latest photo, last-seen place, time and status. Tap one for the full photo with the item highlighted, the exact time, notes, and earlier photos.
 - **Map:** the same data drawn on a room sketch. Solid markers are in view now, dashed ones are last-seen, and amber ones were last seen before the camera moved. Positions are approximate.
 - **Voice:** press Voice. Keepsake asks "What are you looking for?", listens, answers from its stored memory ("I last saw your water bottle on the desk at 3:42 PM…") and opens the item's photo. Typing works too.
-- **Reposition:** press it *before* moving the camera. Monitoring pauses, so nothing counts as a move. Then:
-  1. Press **Finish Repositioning**. Keepsake waits for a steady view and takes a reference photo.
-  2. Drag the Desk, Dresser and Bed boxes over the furniture, and press **Save areas**.
-  3. Press **Resume monitoring**.
+- **Scan room** (top right): do this once at setup and whenever you move the camera. Monitoring pauses, so moving the camera never counts as items moving.
+  1. Aim the camera and hold it still.
+  2. Press **Scan**. Keepsake detects the furniture and shows its proposed areas over a still photo.
+  3. Rename, adjust, delete or add areas, then press **Save and resume**.
 
-  Old photos and locations are kept and marked "before the camera moved". When an item is seen again from the new view, it's **reconfirmed**: you get a fresh photo, but it isn't logged as a move. If the whole view shifts unexpectedly, Keepsake briefly stops updating and suggests Reposition.
+  Old photos and locations are kept and marked "Not rechecked since scan". When an item is seen again it's **reconfirmed**: you get a fresh photo, but it isn't logged as a move. If the whole view shifts unexpectedly, Keepsake briefly stops updating and suggests scanning again.
 - **Privacy panel:** pause photo saving (locations still update), or clear all memories and photos.
 
 ## Configuration
@@ -97,7 +98,8 @@ All settings are optional environment variables, read at backend start. See [.en
 | `CTRLF_SNAPSHOT_COOLDOWN` | `3` | Seconds within which a same-spot photo counts as a duplicate |
 | `CTRLF_SNAPSHOT_DIR` | `backend/data/snapshots` | Where photos are stored (git-ignored) |
 | `CTRLF_DB_PATH` | `backend/data/ctrlf.db` | SQLite file (git-ignored) |
-| `CTRLF_REGIONS` | `backend/regions.json` | Area rectangles, edited by the Reposition flow |
+| `CTRLF_REGIONS` | `backend/regions.json` | Room areas, written by Scan room (ships empty) |
+| `CTRLF_SCAN_MODEL` | `backend/models/yolo11m.pt` | Larger model used only for furniture detection during a scan |
 
 ## API
 
@@ -113,9 +115,9 @@ All settings are optional environment variables, read at backend start. See [.en
 | POST | `/api/query` | `{"text": "my water bottle"}` → `{found, answer, object}` |
 | GET/PUT | `/api/settings` | `{"capture_enabled": bool}` |
 | DELETE | `/api/memory` | Forget everything and delete all photos |
-| POST | `/api/reposition/{start,cancel,finish,resume}` | Reposition mode |
-| GET | `/api/calibration/reference` | Steady reference photo of the new view (kept in memory) |
-| GET/PUT | `/api/regions` | Read or save the area rectangles |
+| POST | `/api/reposition/{start,cancel,finish,resume}` | Scan room: pause → scan → resume |
+| GET | `/api/calibration/reference` | Steady reference photo from the last scan (kept in memory) |
+| GET/PUT | `/api/regions` | Read or save room areas (`{name, kind, camera}`) |
 | GET | `/api/camera` | Live annotated MJPEG preview |
 
 ## Tests
@@ -125,7 +127,7 @@ All settings are optional environment variables, read at backend start. See [.en
 npm --prefix frontend run build
 ```
 
-There are 40 backend tests, all using **synthetic** detections and frames. They cover:
+There are 45 backend tests, all using **synthetic** detections and frames. They cover:
 
 - the catalog and its aliases
 - first sightings, moves between areas and moves within an area
@@ -133,7 +135,8 @@ There are 40 backend tests, all using **synthetic** detections and frames. They 
 - items leaving view (including mid-move) and missing detections
 - snapshot creation, duplicate suppression, retention, persistence and deletion
 - the capture toggle, query answers, and list/detail consistency
-- the full reposition flow, including preserving history and no false moves
+- furniture proposals from scan detections, and adaptive area/"near"/side-of-room wording
+- the full Scan room flow, including preserving history and no false moves
 
 These tests check the logic, not real-world perception accuracy. See the live checklist below.
 
@@ -144,7 +147,7 @@ These tests check the logic, not real-world perception accuracy. See the live ch
 3. **Walk-by:** walk through the frame without touching anything. No new photos.
 4. **Disappearance:** take the bottle away. It keeps its last photo and shows "Out of view".
 5. **Voice:** press Voice and say "my water bottle". You hear the answer and the photo opens.
-6. **Reposition:** press Reposition, move the camera, Finish, adjust the areas, Save, Resume. There should be no new movement events, and old photos remain.
+6. **Scan room:** press Scan room, move the camera if you like, then Scan. Check the proposed areas match your furniture, fix them, and Save and resume. There should be no new movement events, and old photos remain.
 
 ## Privacy
 
@@ -163,7 +166,9 @@ These tests check the logic, not real-world perception accuracy. See the live ch
 | "Camera unavailable" | Start the backend from Terminal and run `check_camera.py` to grant permission |
 | Camera pops up on your iPhone, then disappears | Pick the camera with `CTRLF_CAMERA_INDEX` (iPhone is often 0, built-in camera 1) |
 | "The camera is sending black frames" | Uncover the lens or restart the backend (Continuity Camera sometimes connects black) |
-| "The camera view changed a lot" | If you moved the camera, press Reposition and recalibrate |
+| "The camera view changed a lot" | If you moved the camera, press Scan room |
+| Scan missed a piece of furniture | Add it by hand in the review step. Pretrained COCO has no dresser, shelf, desk or ottoman class, and tables show up as "Table" |
+| "Keepsake is already running" | Another backend owns port 8000. Stop it with Ctrl+C in its window. A second copy must not share the camera and database |
 | No photo after moving an item | Let go and wait about 1 s. Photos are taken only once the item holds still and your hand is clear |
 | Item not detected | Improve the lighting or move it closer, or lower `CTRLF_CONFIDENCE` to 0.3. Small items (mouse, remote) are harder |
 | Voice button says unsupported | Use Chrome, Edge or Safari, or type instead |

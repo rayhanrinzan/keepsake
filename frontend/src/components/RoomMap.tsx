@@ -6,126 +6,96 @@ interface Props {
   objects: TrackedObject[]
   highlightId: string | null
   onOpen: (id: string) => void
-}
-
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
-
-/** Approximate spot on the blueprint: the object's place inside its camera region, mapped into that region's box. */
-function mapPosition(o: TrackedObject, regions: Region[]) {
-  const r = regions.find((r) => r.name === o.region)
-  if (!r || o.x == null || o.y == null) return null
-  const rx = clamp((o.x - r.x0) / (r.x1 - r.x0), 0.18, 0.82)
-  const ry = clamp((o.y - r.y0) / (r.y1 - r.y0), 0.45, 0.62)
-  const [mx0, my0, mx1, my1] = r.map
-  return { left: (mx0 + rx * (mx1 - mx0)) * 100, top: (my0 + ry * (my1 - my0)) * 100 }
+  onScan: () => void
+  /** Reference photo from the last scan, if the backend still has it. */
+  referenceUrl: string | null
 }
 
 /** Nudge markers sideways so items remembered at nearly the same spot don't hide each other. */
-function spread<T extends { pos: { left: number; top: number } | null }>(items: T[]): T[] {
+function spread<T extends { left: number; top: number }>(items: T[]): T[] {
   const taken: { left: number; top: number }[] = []
   return items.map((it) => {
-    const pos = { ...it.pos! }
-    for (let i = 0; i < 8 && taken.some((p) => Math.abs(p.left - pos.left) < 11 && Math.abs(p.top - pos.top) < 10); i++) {
-      pos.left += pos.left > 80 ? -11 : 11
+    const pos = { ...it }
+    for (let i = 0; i < 8 && taken.some((p) => Math.abs(p.left - pos.left) < 6 && Math.abs(p.top - pos.top) < 9); i++) {
+      pos.left += pos.left > 85 ? -6 : 6
     }
     taken.push(pos)
-    return { ...it, pos }
+    return pos
   })
 }
 
-function Furniture({ r }: { r: Region }) {
-  const [x0, y0, x1, y1] = r.map
-  const style = { left: `${x0 * 100}%`, top: `${y0 * 100}%`, width: `${(x1 - x0) * 100}%`, height: `${(y1 - y0) * 100}%` }
-  const isBed = r.name.toLowerCase() === 'bed'
-  return (
-    <div style={style} className="absolute rounded-2xl border-2 border-stone-300 bg-card/70">
-      {isBed && (
-        <div className="absolute inset-x-[8%] top-[18%] flex h-[16%] gap-[4%]">
-          <div className="flex-1 rounded-lg bg-stone-200/80" />
-          <div className="flex-1 rounded-lg bg-stone-200/80" />
-        </div>
-      )}
-      <span className="absolute top-2.5 left-3.5 font-serif text-[15px] text-stone-500">{r.name}</span>
-    </div>
+/**
+ * The room as the camera sees it: scanned areas as outlines, items at their last-seen spot.
+ * A recent memory photo sits faintly underneath so the layout is recognizable.
+ */
+export function RoomMap({ regions, objects, highlightId, onOpen, onScan, referenceUrl }: Props) {
+  const placed = spread(
+    objects.filter((o) => o.seen && o.x != null && o.y != null).map((o) => ({ o, left: o.x! * 100, top: o.y! * 100 })),
   )
-}
-
-export function RoomMap({ regions, objects, highlightId, onOpen }: Props) {
-  const placed = spread(objects.map((o) => ({ o, pos: mapPosition(o, regions) })).filter((p) => p.pos))
-  const elsewhere = objects.filter((o) => o.seen && !mapPosition(o, regions))
+  const backdrop = objects
+    .filter((o) => o.snapshot && !o.awaiting_reconfirmation)
+    .map((o) => o.snapshot!)
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]
   const unseen = objects.filter((o) => !o.seen)
 
   return (
-    <div className="space-y-4">
-      <div className="relative aspect-[16/10] w-full overflow-hidden rounded-[28px] bg-[oklch(0.955_0.012_75)] shadow-card">
-        <div
-          aria-hidden
-          className="absolute inset-0"
-          style={{
-            backgroundImage:
-              'linear-gradient(oklch(0.5 0.03 60 / .07) 1px, transparent 1px), linear-gradient(90deg, oklch(0.5 0.03 60 / .07) 1px, transparent 1px)',
-            backgroundSize: '28px 28px',
-          }}
-        />
-        <div aria-hidden className="absolute inset-[2%] rounded-[22px] border-[3px] border-stone-400/70" />
-        <div aria-hidden className="absolute bottom-[1.2%] left-[12%] h-[2%] w-[14%] bg-[oklch(0.955_0.012_75)]" />
-        <span className="absolute bottom-[3.6%] left-[14.5%] text-xs tracking-wide text-stone-400">Door</span>
+    <div className="space-y-3">
+      <div className="card relative aspect-video w-full overflow-hidden bg-sunken">
+        {(referenceUrl || backdrop) && (
+          <img src={referenceUrl ?? backdrop!.image_url} alt="" aria-hidden className="absolute inset-0 size-full object-cover opacity-30 grayscale" />
+        )}
+        {regions.map((r) => (
+          <div
+            key={r.name}
+            className="absolute rounded-lg border border-ink/25 bg-surface/55"
+            style={{ left: `${r.x0 * 100}%`, top: `${r.y0 * 100}%`, width: `${(r.x1 - r.x0) * 100}%`, height: `${(r.y1 - r.y0) * 100}%` }}
+          >
+            <span className="absolute top-1.5 left-2 text-[12px] font-medium text-ink/70">{r.name}</span>
+          </div>
+        ))}
 
-        {regions.map((r) => <Furniture key={r.name} r={r} />)}
-
-        {placed.map(({ o, pos }) => {
+        {placed.map(({ o, left, top }) => {
           const Icon = iconFor(o.icon)
           const highlighted = o.object_id === highlightId
           const tone = o.awaiting_reconfirmation
-            ? 'border-dashed border-amber-ink/60 bg-amber-50 text-amber-ink'
-            : o.visible
-              ? 'border-transparent bg-clay-500 text-white shadow-lift'
-              : 'border-dashed border-stone-400 bg-card text-stone-600'
+            ? 'border-dashed border-caution/60 bg-caution-soft text-caution'
+            : o.visible ? 'border-transparent bg-ink text-white' : 'border-dashed border-ink/40 bg-surface text-ink'
           return (
             <button
               key={o.object_id}
               onClick={() => onOpen(o.object_id)}
-              style={{ left: `${pos!.left}%`, top: `${pos!.top}%` }}
-              className="absolute z-10 -translate-x-1/2 -translate-y-1/2 transition-[left,top] duration-700 ease-out motion-reduce:transition-none"
-              aria-label={`${o.name}: last seen on the ${o.region}${o.visible ? ', in view now' : ', out of view'}`}
+              style={{ left: `${left}%`, top: `${top}%` }}
+              className="absolute z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center transition-[left,top] duration-500 ease-out motion-reduce:transition-none"
+              aria-label={`${o.name}${o.visible ? ', in view now' : ', last seen here'}`}
             >
-              {highlighted && <span className="pulse-ring absolute inset-0 rounded-full bg-clay-500/50" />}
-              <span className={`press relative flex size-9 items-center justify-center rounded-full border-2 sm:size-12 lg:size-14 ${tone} ${highlighted ? 'ring-4 ring-clay-500/40' : ''}`}>
-                <Icon className="size-[18px] sm:size-6" strokeWidth={2} />
+              <span className={`press flex size-9 items-center justify-center rounded-full border-2 shadow-raised sm:size-10 ${tone} ${highlighted ? 'outline-2 outline-offset-2 outline-ink' : ''}`}>
+                <Icon className="size-4 sm:size-[18px]" strokeWidth={1.75} />
               </span>
-              <span className={`absolute top-full ${highlighted ? "" : "hidden sm:block"} left-1/2 mt-1 -translate-x-1/2 rounded-full bg-card px-1.5 py-0.5 text-[11px] sm:text-xs font-medium whitespace-nowrap shadow-card`}>
+              <span className={`mt-1 rounded-md bg-surface px-1.5 py-0.5 text-[12px] font-medium whitespace-nowrap shadow-ring ${highlighted ? '' : 'hidden sm:block'}`}>
                 {o.name}
               </span>
             </button>
           )
         })}
+
+        {regions.length === 0 && (
+          <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-between gap-2 bg-surface/90 px-4 py-3 backdrop-blur">
+            <p className="text-muted">No areas yet. Scan the room so Keepsake can name its furniture.</p>
+            <button onClick={onScan} className="press min-h-9 rounded-lg bg-ink px-3 text-[13px] font-medium text-white hover:bg-ink/85">
+              Scan room
+            </button>
+          </div>
+        )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted">
-        <span className="flex items-center gap-2"><span className="size-3 rounded-full bg-clay-500" /> In view now</span>
-        <span className="flex items-center gap-2"><span className="size-3 rounded-full border-2 border-dashed border-stone-400" /> Last seen (out of view)</span>
-        <span className="flex items-center gap-2"><span className="size-3 rounded-full border-2 border-dashed border-amber-ink/60 bg-amber-50" /> Before camera moved</span>
-        <span className="text-stone-400">Positions are approximate.</span>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[13px] text-muted">
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-ink" /> In view</span>
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full border border-dashed border-ink/50" /> Last seen</span>
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full border border-dashed border-caution bg-caution-soft" /> Before last scan</span>
+        <span>Shown as the camera sees the room.</span>
       </div>
 
-      {(elsewhere.length > 0 || unseen.length > 0) && (
-        <div className="flex flex-wrap gap-2">
-          {[...elsewhere, ...unseen].map((o) => {
-            const Icon = iconFor(o.icon)
-            return (
-              <button
-                key={o.object_id}
-                onClick={() => onOpen(o.object_id)}
-                className="press flex items-center gap-2 rounded-full bg-card px-3 py-2 text-sm shadow-card hover:bg-stone-50"
-              >
-                <Icon className="size-4 text-stone-500" />
-                {o.name}
-                <span className="text-muted">· {o.seen ? 'elsewhere in the room' : 'not yet seen'}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
+      {unseen.length > 0 && <p className="text-[13px] text-muted">Not yet seen: {unseen.map((o) => o.name).join(', ')}</p>}
     </div>
   )
 }

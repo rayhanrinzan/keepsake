@@ -49,7 +49,14 @@ export interface Region {
   y0: number
   x1: number
   y1: number
-  map: [number, number, number, number]
+  kind: string
+}
+
+export interface ProposedArea {
+  name: string
+  kind: string
+  camera: [number, number, number, number]
+  confidence: number
 }
 
 export interface Health {
@@ -61,6 +68,7 @@ export interface Health {
   detections: { category: string; name: string; confidence: number }[]
   mode: Mode
   reference_ready: boolean
+  proposal: ProposedArea[]
   view_id: string
   capture_enabled: boolean
 }
@@ -109,7 +117,7 @@ export const api = {
   clear: () => req<{ cleared: boolean }>('/memory', { method: 'DELETE' }),
   setCapture: (enabled: boolean) => req<{ capture_enabled: boolean }>('/settings', json('PUT', { capture_enabled: enabled })),
   reposition: (step: 'start' | 'cancel' | 'finish' | 'resume') => req<{ mode: Mode }>(`/reposition/${step}`, json('POST')),
-  saveRegions: (regions: { name: string; camera: number[]; map: number[] }[]) =>
+  saveRegions: (regions: { name: string; kind: string; camera: number[] }[]) =>
     req<Region[]>('/regions', json('PUT', { regions })),
   cameraUrl: '/api/camera',
   referenceUrl: '/api/calibration/reference',

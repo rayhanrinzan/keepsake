@@ -36,3 +36,7 @@ runs/
 .DS_Store
 *.log
 tmp/
+
+# room areas written by Scan room (local to each setup)
+backend/regions.json
+backend/regions.tmp

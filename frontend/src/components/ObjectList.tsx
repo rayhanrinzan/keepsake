@@ -2,18 +2,14 @@ import type { TrackedObject } from '../lib/api'
 import { iconFor, placeName, statusLabel, timeAgo } from '../lib/format'
 import { SnapshotPhoto } from './SnapshotPhoto'
 
-const TONE = {
-  live: 'bg-sage-50 text-sage-700',
-  past: 'bg-stone-100 text-stone-600',
-  warn: 'bg-amber-50 text-amber-ink',
-  none: 'bg-stone-100 text-stone-500',
-}
+const DOT = { live: 'bg-live', past: 'bg-faint', warn: 'bg-caution', none: 'bg-hairline' }
+const TEXT = { live: 'text-live', past: 'text-muted', warn: 'text-caution', none: 'text-faint' }
 
-export function StatusChip({ o }: { o: TrackedObject }) {
+export function Status({ o }: { o: TrackedObject }) {
   const { label, tone } = statusLabel(o)
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${TONE[tone]}`}>
-      {tone === 'live' && <span className="size-1.5 rounded-full bg-sage-600" />}
+    <span className={`inline-flex items-center gap-1.5 text-[13px] font-medium ${TEXT[tone]}`}>
+      <span aria-hidden className={`size-1.5 rounded-full ${DOT[tone]}`} />
       {label}
     </span>
   )
@@ -26,44 +22,35 @@ function ObjectCard({ o, now, highlighted, onOpen }: {
   onOpen: () => void
 }) {
   const Icon = iconFor(o.icon)
-  const never = o.status === 'never'
   return (
     <button
       onClick={onOpen}
-      className={[
-        'press group flex flex-col overflow-hidden rounded-3xl border border-transparent bg-card text-left shadow-card',
-        'hover:shadow-lift focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-clay-500',
-        highlighted ? 'ring-3 ring-clay-500' : '',
-      ].join(' ')}
+      className={`card press group flex w-full flex-col overflow-hidden text-left hover:shadow-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink ${highlighted ? 'outline-2 outline-offset-2 outline-ink' : ''}`}
     >
-      <div className="relative aspect-[4/3] bg-stone-100">
+      <div className="aspect-[4/3] w-full bg-sunken">
         {o.snapshot ? (
           <SnapshotPhoto snapshot={o.snapshot} alt={`Last photo of your ${o.name.toLowerCase()}`} />
         ) : (
-          <div className="flex size-full flex-col items-center justify-center gap-2 text-stone-400">
-            <Icon className="size-10" strokeWidth={1.5} />
-            <span className="text-xs">{never ? 'No photo yet' : 'Photo not saved'}</span>
+          <div className="flex size-full items-center justify-center text-faint">
+            <Icon className="size-8" strokeWidth={1.5} />
           </div>
         )}
-        <span className="absolute top-3 left-3 flex size-9 items-center justify-center rounded-full bg-card/90 text-ink shadow-card backdrop-blur">
-          <Icon className="size-[18px]" strokeWidth={2} />
-        </span>
       </div>
-      <div className="flex flex-1 flex-col gap-2 p-4">
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="font-serif text-xl leading-tight">{o.name}</h3>
-          <StatusChip o={o} />
+      <div className="flex flex-col gap-1 px-4 pt-3 pb-4">
+        <div className="flex items-center gap-2">
+          <Icon className="size-4 shrink-0 text-muted" strokeWidth={1.75} />
+          <h3 className="font-semibold">{o.name}</h3>
         </div>
-        {never ? (
-          <p className="text-[15px] text-muted">Not yet seen</p>
-        ) : (
-          <p className="text-[15px] leading-snug">
-            <span className="text-muted">Last seen: </span>
-            <span className="font-semibold">{placeName(o.region!)}</span>
-            <br />
-            <span className="text-muted">{timeAgo(o.last_seen!, now)}</span>
-          </p>
-        )}
+        <p className="text-muted">
+          {o.seen ? (
+            <>
+              <span className="text-ink">{placeName(o.region!)}</span>
+              <span aria-hidden> · </span>
+              <span className="tabular-nums">{timeAgo(o.last_seen!, now)}</span>
+            </>
+          ) : 'Not yet seen'}
+        </p>
+        {o.seen && <Status o={o} />}
       </div>
     </button>
   )
@@ -78,22 +65,20 @@ export function ObjectList({ objects, now, highlightId, onOpen }: {
   const seen = objects.filter((o) => o.seen)
   const unseen = objects.filter((o) => !o.seen)
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {seen.length === 0 && (
-        <div className="rounded-3xl bg-clay-50 p-6 text-[15px] leading-relaxed text-clay-700">
-          <p className="font-serif text-xl text-ink">Nothing remembered yet</p>
-          <p className="mt-1">
-            Put one of the items below where the camera can see it and leave it for a moment. Keepsake will
-            take a photo and remember where it is.
+        <div className="card px-5 py-4">
+          <p className="font-semibold">Nothing remembered yet</p>
+          <p className="mt-0.5 text-muted">
+            Put one of these items where the camera can see it and leave it for a moment. Keepsake saves a photo once it
+            settles.
           </p>
         </div>
       )}
-      <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <ul className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
         {[...seen, ...unseen].map((o) => (
           <li key={o.object_id} className="flex">
-            <div className="flex w-full flex-col [&>button]:flex-1">
-              <ObjectCard o={o} now={now} highlighted={o.object_id === highlightId} onOpen={() => onOpen(o.object_id)} />
-            </div>
+            <ObjectCard o={o} now={now} highlighted={o.object_id === highlightId} onOpen={() => onOpen(o.object_id)} />
           </li>
         ))}
       </ul>

@@ -60,7 +60,7 @@ class VisionWorker(threading.Thread):
     def __init__(self, memory: SpatialMemory, regions: list[Region], snapshots: SnapshotStore,
                  modes: ModeController, camera_index: int | str = 0, model_path: str = "yolo11n.pt",
                  conf: float = 0.4, fps: float = 5.0, frame_width: int = 640,
-                 camera_shift_motion: float = 0.5):
+                 camera_shift_motion: float = 0.5, scan_model_path: str | None = None):
         super().__init__(daemon=True, name="vision")
         self.memory = memory
         self.regions = regions  # shared list; updated in place by calibration
@@ -68,6 +68,8 @@ class VisionWorker(threading.Thread):
         self.modes = modes
         self.camera_index = camera_index
         self.model_path = model_path
+        self.scan_model_path = scan_model_path  # larger model used only by Scan room
+        self._scan_model = None
         self.conf = conf
         self.interval = 1.0 / max(fps, 0.5)
         self.frame_width = frame_width
@@ -183,6 +185,14 @@ class VisionWorker(threading.Thread):
 
     def _scan(self, model, reference: np.ndarray) -> tuple[bytes | None, list[dict]]:
         """Scan room: detect furniture over the last few (steady) frames and propose areas."""
+        if self._scan_model is None and self.scan_model_path:
+            try:
+                from ultralytics import YOLO
+                self._scan_model = YOLO(self.scan_model_path)
+            except Exception:  # noqa: BLE001
+                log.exception("scan model unavailable; using the tracking model")
+                self.scan_model_path = None
+        model = self._scan_model or model
         ids = [i for i, n in model.names.items() if n in FURNITURE]
         per_frame = []
         for _, f in list(self._ring)[-5:]:
