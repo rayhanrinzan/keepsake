@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from departure import DepartureFeed, DeparturePresence
 from departure_api import departure_router
 from reminders import ReminderEngine
 from reminders_api import reminders_router
-from memory import SpatialMemory, answer_query, parse_query
+from memory import SpatialMemory, answer_query, parse_query, spoken_time
 from modes import ModeController, ModeError
 from snapshots import SnapshotStore
 from spatial import load_regions, save_regions, validate_regions
@@ -56,7 +57,8 @@ modes = ModeController(memory)
 departures = DepartureFeed()  # possible departures for Departure Alerts (integrations/photon)
 reminders = ReminderEngine(db, memory, modes, regions, departures,  # smart memory reminders
                            status_fn=lambda: dict(worker.status) if worker else {},
-                           camera_mode=CAMERA_MODE)
+                           camera_mode=CAMERA_MODE,
+                           photo_available=lambda photo: snapshots.path_for(photo["filename"]) is not None)
 _regions_before: list = []  # areas when the current scan started
 worker = None
 grok = GrokTTS(os.environ["XAI_API_KEY"]) if os.getenv("XAI_API_KEY") else None
@@ -103,25 +105,43 @@ app.include_router(reminders_router(reminders))
 # ---------- serializers ----------
 
 def snapshot_view(s: dict | None) -> dict | None:
-    if not s:
+    if not s or snapshots.path_for(s["filename"]) is None:
         return None
     return {"id": s["id"], "object_id": s["object_id"], "event_type": s["event_type"],
-            "timestamp": s["timestamp"], "region": s["region"],
+            "timestamp": s["timestamp"], "region": None if CAMERA_MODE == "wearable" else s["region"],
             "bbox": [s["x0"], s["y0"], s["x1"], s["y1"]], "confidence": s["confidence"],
             "view_id": s["view_id"], "image_url": f"/api/snapshots/{s['id']}/image"}
 
 
 def object_view(item: dict, rec: dict | None, snap: dict | None, states: dict) -> dict:
     """The one canonical object shape used by List, Map, detail and voice."""
+    if snap and snapshots.path_for(snap["filename"]) is None:
+        snap = None
+    if CAMERA_MODE == "wearable":
+        observation = db.latest_sighting(item["object_id"])
+        if observation and observation["snapshot_id"] is not None:
+            photo = db.get_snapshot(observation["snapshot_id"])
+            if photo and photo["object_id"] == item["object_id"] and snapshots.path_for(photo["filename"]):
+                snap = photo
+        if (rec is not None and observation
+                and datetime.fromisoformat(observation["timestamp"]).timestamp()
+                > datetime.fromisoformat(rec["last_seen"]).timestamp()):
+            rec = {**rec, "last_seen": observation["timestamp"], "confidence": observation["confidence"],
+                   "view_id": observation.get("view_id")}
+        if rec is None and (observation or snap):
+            evidence = observation or snap
+            rec = {"last_seen": evidence["timestamp"], "visible": False,
+                   "confidence": evidence["confidence"], "view_id": evidence.get("view_id"),
+                   "region": None, "x": None, "y": None, "lost_while_moving": False}
     base = {"object_id": item["object_id"], "category": item["category"], "name": item["name"],
-            "icon": item["icon"], "seen": rec is not None and rec.get("region") is not None}
+            "icon": item["icon"], "seen": rec is not None and (CAMERA_MODE == "wearable" or rec.get("region") is not None)}
     if not base["seen"]:
         return {**base, "status": "never", "region": None, "x": None, "y": None,
                 "last_seen": None, "visible": False, "confidence": None, "moving": False,
                 "awaiting_reconfirmation": False, "lost_while_moving": False, "snapshot": None}
     awaiting = rec.get("view_id") not in (None, memory.view_id)
     return {**base, "status": "visible" if rec["visible"] else "last_seen",
-            "region": rec["region"], "x": rec["x"], "y": rec["y"], "last_seen": rec["last_seen"],
+            "region": None if CAMERA_MODE == "wearable" else rec["region"], "x": rec["x"], "y": rec["y"], "last_seen": rec["last_seen"],
             "visible": rec["visible"], "confidence": rec["confidence"],
             "moving": states.get(item["category"], "STABLE") != "STABLE",
             "awaiting_reconfirmation": awaiting, "lost_while_moving": rec["lost_while_moving"],
@@ -151,6 +171,8 @@ def health():
     status = dict(worker.status) if worker else {"camera": "disabled", "error": None,
                                                  "warning": None, "fps": 0, "detections": [],
                                                  "camera_mode": CAMERA_MODE}
+    if CAMERA_MODE == "wearable":
+        status["person_left_count"] = 0  # other people leaving a worn camera is not wearer departure
     return {"status": "ok", **status, **modes.status(), "capture_enabled": snapshots.enabled}
 
 
@@ -182,7 +204,8 @@ def get_object_snapshots(object_id: str, limit: int = 20):
     item = find_item(object_id)
     if item is None:
         raise HTTPException(404, "Keepsake doesn't track that item")
-    return [snapshot_view(s) for s in db.get_snapshots(item["object_id"], min(limit, 100))]
+    return [view for s in db.get_snapshots(item["object_id"], min(limit, 100))
+            if (view := snapshot_view(s)) is not None]
 
 
 @app.get("/api/snapshots/{snapshot_id}/image")
@@ -231,6 +254,12 @@ def query(q: Query):
     obj = None
     if r["category"]:
         obj = next(o for o in all_objects() if o["category"] == r["category"])
+    if CAMERA_MODE == "wearable" and obj and obj["seen"]:
+        answer = f"I last saw your {obj['name'].lower()} {spoken_time(obj['last_seen'])}."
+        if obj["snapshot"]:
+            answer += " The last photo is in Keepsake."
+        answer += " It may have moved since."
+        return {"found": True, "answer": answer, "object": obj}
     return {"found": r["found"], "answer": r["answer"], "object": obj}
 
 
