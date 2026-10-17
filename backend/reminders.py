@@ -501,8 +501,10 @@ class ReminderEngine:
             return "camera_shift"  # wearable cameras move all the time; that's not unreliability
         if rec is None or not rec.get("last_seen"):
             return "no_memory"
-        if rec.get("lost_while_moving"):
-            return "lost_while_moving"  # seen being moved out of view: likely carried
+        if fixed and rec.get("lost_while_moving"):
+            # A fixed camera saw it moving as it left view: likely carried. On a worn camera this
+            # flag is set by the camera's own motion, so there only possible_pickup cancels.
+            return "lost_while_moving"
         if fixed and not self._view_ok(rec):
             return "location_unreliable"
         if photo is None:

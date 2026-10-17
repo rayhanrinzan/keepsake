@@ -365,12 +365,22 @@ def test_stale_photo_cancels(w):
     assert w.alerts == [] and w.state().reason == "stale_photo"
 
 
-def test_lost_while_moving_cancels(w):
+def test_lost_while_moving_cancels_on_a_fixed_camera(db):
+    w = World(db, camera_mode="fixed", status={"camera": "active"})
+    w.sight(event_type="moved")
+    w.run(1)
+    w.sight(visible=False, lost=True, photo=False)
+    w.run(20)
+    assert w.state().reason == "lost_while_moving"
+
+
+def test_lost_while_moving_is_ignored_on_a_wearable(w):
+    """Seen live: memory flags this whenever a worn camera turns away; it isn't a pickup."""
     w.sight()
     w.run(1)
     w.sight(visible=False, lost=True, photo=False)
     w.run(20)
-    assert w.alerts == [] and w.state().reason == "lost_while_moving"
+    assert len(w.alerts) == 1
 
 
 def test_bad_events_are_rejected():
