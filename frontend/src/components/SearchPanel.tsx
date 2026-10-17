@@ -154,9 +154,9 @@ export function SearchPanel({ onResult, prompt, objects = [] }: {
         <button
           onClick={busy ? stop : () => startVoice()}
           aria-label={busy ? 'Stop voice assistant' : 'Ask by voice'}
-          className="press relative flex h-12 shrink-0 items-center gap-2 rounded-xl bg-ink pr-5 pl-4 font-medium text-white hover:bg-ink/85"
+          className="glossy press relative flex h-12 shrink-0 items-center gap-2 rounded-xl pr-5 pl-4 font-medium text-white"
         >
-          {listening && <span aria-hidden className="listening-ring absolute inset-0 rounded-xl bg-ink/40" />}
+          {listening && <span aria-hidden className="listening-ring absolute inset-0 rounded-xl bg-deep/40" />}
           {busy ? <Square className="relative size-4 fill-current" strokeWidth={1.75} /> : <Mic className="relative size-[18px]" strokeWidth={1.75} />}
           <span className="relative">{listening ? 'Listening' : busy ? 'Stop' : 'Voice'}</span>
         </button>
@@ -169,7 +169,7 @@ export function SearchPanel({ onResult, prompt, objects = [] }: {
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Where is my phone?"
-            className="h-12 w-full rounded-xl border border-hairline bg-canvas pr-3 pl-10 outline-none placeholder:text-faint focus:border-ink/40 focus:bg-surface"
+            className="h-12 w-full rounded-xl border border-hairline bg-canvas pr-3 pl-10 outline-none placeholder:text-faint focus:border-deep/50 focus:bg-surface"
           />
         </form>
       </div>

@@ -25,13 +25,13 @@ function ObjectCard({ o, now, highlighted, onOpen }: {
   return (
     <button
       onClick={onOpen}
-      className={`card press group flex w-full flex-col overflow-hidden text-left hover:shadow-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink ${highlighted ? 'outline-2 outline-offset-2 outline-ink' : ''}`}
+      className={`card press group flex w-full flex-col overflow-hidden text-left hover:border-deep/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep ${highlighted ? 'outline-2 outline-offset-2 outline-deep' : ''}`}
     >
-      <div className="aspect-[4/3] w-full bg-sunken">
+      <div className="photo-well aspect-[4/3] w-full">
         {o.snapshot ? (
           <SnapshotPhoto snapshot={o.snapshot} alt={`Last photo of your ${o.name.toLowerCase()}`} />
         ) : (
-          <div className="flex size-full items-center justify-center text-faint">
+          <div className="flex size-full items-center justify-center text-deep/60">
             <Icon className="size-8" strokeWidth={1.5} />
           </div>
         )}

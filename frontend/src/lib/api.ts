@@ -73,6 +73,8 @@ export interface Health {
   capture_enabled: boolean
   person_present?: boolean
   person_left_count?: number
+  /** Only set by the design-only sample server (`npm run dev:sample`). */
+  sample?: boolean
 }
 
 export interface QueryResult {
