@@ -173,7 +173,7 @@ class Query(BaseModel):
 
 @app.post("/api/query")
 def query(q: Query):
-    r = answer_query(q.text, db, view_id=memory.view_id)
+    r = answer_query(q.text, db, view_id=memory.view_id, regions=regions)
     obj = None
     if r["category"]:
         obj = next(o for o in all_objects() if o["category"] == r["category"])
@@ -205,7 +205,7 @@ def clear_memory():
     return {"cleared": True}
 
 
-# ---------- reposition & calibration ----------
+# ---------- Scan room (reposition + calibration) ----------
 
 def _mode_call(fn):
     try:
@@ -246,7 +246,7 @@ def calibration_reference():
 class RegionIn(BaseModel):
     name: str
     camera: list[float]
-    map: list[float] | None = None
+    kind: str = "custom"
 
 
 class RegionsIn(BaseModel):
@@ -256,7 +256,7 @@ class RegionsIn(BaseModel):
 @app.put("/api/regions")
 def put_regions(body: RegionsIn):
     try:
-        new = validate_regions([r.model_dump(exclude_none=True) for r in body.regions])
+        new = validate_regions([r.model_dump() for r in body.regions])
     except (ValueError, KeyError, TypeError) as e:
         raise HTTPException(422, str(e)) from e
     regions[:] = new  # shared with SpatialMemory and the vision worker

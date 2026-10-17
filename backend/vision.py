@@ -13,6 +13,7 @@ from collections import deque
 import cv2
 import numpy as np
 
+from furniture import FURNITURE, propose_regions
 from memory import ALIASES, Observation, SpatialMemory, display_name
 from modes import MONITORING, ModeController
 from snapshots import SnapshotStore
@@ -153,7 +154,7 @@ class VisionWorker(threading.Thread):
         if self.modes.reset_tracker:  # new viewpoint: drop ByteTrack identities
             self.modes.reset_tracker = False
             self._reset_tracker(model)
-        self.modes.on_frame(global_motion, lambda: self._encode(full, 85))
+        self.modes.on_frame(global_motion, lambda: self._scan(model, full))
 
         # Whole-view change outside Reposition mode: hold location updates instead of logging moves.
         monitoring = self.modes.mode == MONITORING
@@ -163,7 +164,7 @@ class VisionWorker(threading.Thread):
             self.status["camera_shift_at"] = time.time()
         if monitoring and time.time() - self.status.get("camera_shift_at", 0) < 10:
             warning = warning or ("The camera view changed a lot. If you moved the camera, "
-                                  "press Reposition to recalibrate.")
+                                  "press Scan room to update its areas.")
         self.status["warning"] = warning
 
         try:
@@ -179,6 +180,21 @@ class VisionWorker(threading.Thread):
             self.status["error"] = f"Detection error: {e}"
             obs = []
         self._publish(frame, [o for o in obs if o.category != PERSON])
+
+    def _scan(self, model, reference: np.ndarray) -> tuple[bytes | None, list[dict]]:
+        """Scan room: detect furniture over the last few (steady) frames and propose areas."""
+        ids = [i for i, n in model.names.items() if n in FURNITURE]
+        per_frame = []
+        for _, f in list(self._ring)[-5:]:
+            small = self._resize(f, self.frame_width)
+            h, w = small.shape[:2]
+            res = model.predict(small, conf=0.25, classes=ids, verbose=False)[0]
+            per_frame.append([(model.names[int(c)], float(cf), (b[0] / w, b[1] / h, b[2] / w, b[3] / h))
+                              for b, c, cf in zip(res.boxes.xyxy.tolist(), res.boxes.cls.tolist(),
+                                                  res.boxes.conf.tolist())])
+        proposal = propose_regions(per_frame)
+        log.info("scan found %s", [p["name"] for p in proposal])
+        return self._encode(reference, 85), proposal
 
     def _frame_for(self, frame_id: int | None) -> np.ndarray | None:
         for fid, f in reversed(self._ring):
@@ -238,16 +254,16 @@ class VisionWorker(threading.Thread):
         out = frame.copy()
         for r in list(self.regions):  # region overlays
             p0, p1 = (int(r.x0 * w), int(r.y0 * h)), (int(r.x1 * w) - 1, int(r.y1 * h) - 1)
-            cv2.rectangle(out, p0, p1, (120, 170, 220), 1)
+            cv2.rectangle(out, p0, p1, (235, 235, 235), 1)
             cv2.putText(out, r.name, (p0[0] + 6, p0[1] + 18), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5, (150, 200, 240), 1, cv2.LINE_AA)
+                        0.5, (245, 245, 245), 1, cv2.LINE_AA)
         for o in obs:
             x0, y0, x1, y1 = o.bbox
             p0, p1 = (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h))
-            cv2.rectangle(out, p0, p1, (70, 150, 240), 2)
+            cv2.rectangle(out, p0, p1, (90, 200, 120), 2)
             label = f"{display_name(o.category)} {o.confidence:.0%}"
             cv2.putText(out, label, (p0[0], max(14, p0[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5, (70, 150, 240), 1, cv2.LINE_AA)
+                        0.5, (90, 200, 120), 1, cv2.LINE_AA)
         if self.modes.mode != MONITORING:
             cv2.rectangle(out, (0, 0), (w, 28), (40, 40, 40), -1)
             cv2.putText(out, "Monitoring paused", (10, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.55,

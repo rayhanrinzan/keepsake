@@ -1,8 +1,4 @@
 {
-  "_comment": "camera: [x0, y0, x1, y1] normalized to the camera frame. map: [x0, y0, x1, y1] normalized to the dashboard blueprint.",
-  "regions": [
-    { "name": "Desk",    "camera": [0.0,   0.0, 0.333, 1.0], "map": [0.04, 0.06, 0.36, 0.40] },
-    { "name": "Dresser", "camera": [0.333, 0.0, 0.667, 1.0], "map": [0.62, 0.06, 0.96, 0.30] },
-    { "name": "Bed",     "camera": [0.667, 0.0, 1.0,   1.0], "map": [0.50, 0.48, 0.96, 0.94] }
-  ]
+  "_comment": "Room areas in camera space: [x0, y0, x1, y1] normalized to the frame. Written by Scan room.",
+  "regions": []
 }

@@ -1,20 +1,17 @@
 """API round-trips with the camera disabled; observations are injected synthetically."""
 import importlib
-import shutil
-from pathlib import Path
 
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import BED, DESK, Clock, obs
-
-BACKEND = Path(__file__).parent.parent / "backend"
+from conftest import BED, DESK, TEST_AREAS, Clock, obs
+from spatial import save_regions
 
 
 @pytest.fixture
 def api(tmp_path, monkeypatch):
-    shutil.copy(BACKEND / "regions.json", tmp_path / "regions.json")
+    save_regions(TEST_AREAS, tmp_path / "regions.json")
     monkeypatch.setenv("CTRLF_CAMERA_ENABLED", "0")
     monkeypatch.setenv("CTRLF_DB_PATH", str(tmp_path / "api.db"))
     monkeypatch.setenv("CTRLF_SNAPSHOT_DIR", str(tmp_path / "snaps"))
@@ -107,15 +104,17 @@ def test_reposition_flow_preserves_history(api):
 
     assert c.post("/api/reposition/finish").json()["mode"] == "CALIBRATING"
     assert c.get("/api/calibration/reference").status_code == 404
-    main.modes.on_frame(0.0, lambda: b"jpeg")  # worker sees a steady view
-    for _ in range(5):
-        main.modes.on_frame(0.0, lambda: b"jpeg")
+    scan = lambda: (b"jpeg", [{"name": "Couch", "kind": "couch", "camera": [0, 0, 0.5, 1]}])  # noqa: E731
+    for _ in range(6):
+        main.modes.on_frame(0.0, scan)  # worker sees a steady view, then scans it
     assert c.get("/api/calibration/reference").content == b"jpeg"
+    assert c.get("/api/health").json()["proposal"][0]["name"] == "Couch"
 
-    new = [{"name": "Desk", "camera": [0.5, 0, 1, 1], "map": [0.04, 0.06, 0.36, 0.4]},
-           {"name": "Bed", "camera": [0, 0, 0.5, 1], "map": [0.5, 0.48, 0.96, 0.94]}]
+    new = [{"name": "Desk", "camera": [0.5, 0, 1, 1]},
+           {"name": "Couch", "kind": "couch", "camera": [0, 0, 0.5, 1]}]
     assert c.put("/api/regions", json={"regions": [{"name": "X", "camera": [0.5, 0, 0.4, 1]}]}).status_code == 422
-    assert [r["name"] for r in c.put("/api/regions", json={"regions": new}).json()] == ["Desk", "Bed"]
+    assert c.put("/api/regions", json={"regions": [{"name": "Near Bed", "camera": [0, 0, 1, 1]}]}).status_code == 422
+    assert [r["name"] for r in c.put("/api/regions", json={"regions": new}).json()] == ["Desk", "Couch"]
     assert c.get("/api/health").json()["mode"] == "READY_TO_RESUME"
     assert c.post("/api/reposition/resume").json()["mode"] == "MONITORING"
 

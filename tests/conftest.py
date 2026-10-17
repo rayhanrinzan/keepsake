@@ -6,7 +6,7 @@ import pytest
 from database import Database
 from memory import Observation, SpatialMemory
 from snapshots import SnapshotStore
-from spatial import load_regions
+from spatial import Region
 
 T0 = datetime(2026, 10, 15, 14, 30, tzinfo=timezone.utc)
 STEP = timedelta(seconds=0.2)  # ~5 fps, like the live worker
@@ -38,9 +38,14 @@ class Clock:
         self.t += timedelta(seconds=seconds)
 
 
+# Hand-drawn test areas (live areas come from Scan room).
+TEST_AREAS = [Region("Desk", 0.0, 0.0, 0.333, 1.0), Region("Dresser", 0.333, 0.0, 0.667, 1.0),
+              Region("Bed", 0.667, 0.0, 1.0, 1.0, kind="bed")]
+
+
 @pytest.fixture
 def regions():
-    return load_regions()
+    return list(TEST_AREAS)
 
 
 @pytest.fixture

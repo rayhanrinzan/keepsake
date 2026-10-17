@@ -1,4 +1,4 @@
-"""Monitoring / reposition mode controller.
+"""Monitoring / Scan room (reposition) mode controller.
 
 MONITORING ──start──► REPOSITIONING ──finish──► CALIBRATING ──regions saved──► READY_TO_RESUME
     ▲                      │ cancel                (waits for a steady view,          │
@@ -24,11 +24,13 @@ class ModeController:
         self.steady_motion = steady_motion
         self._steady = 0
         self.reference_jpeg: bytes | None = None
+        self.proposal: list[dict] = []  # areas found by Scan room, for the user to review
         self.reset_tracker = False  # consumed by the vision worker
         self._lock = threading.Lock()
 
     def status(self) -> dict:
         return {"mode": self.mode, "reference_ready": self.reference_jpeg is not None,
+                "proposal": self.proposal,
                 "view_id": self.memory.view_id, "paused": self.memory.paused}
 
     def start(self) -> None:
@@ -51,17 +53,21 @@ class ModeController:
         with self._lock:
             if self.mode != REPOSITIONING:
                 raise ModeError("Not repositioning")
-            self.reference_jpeg, self._steady = None, 0
+            self.reference_jpeg, self.proposal, self._steady = None, [], 0
             self.reset_tracker = True
             self.mode = CALIBRATING
 
-    def on_frame(self, global_motion: float, encode_reference) -> None:
-        """Called by the vision worker each frame; captures the reference once the view is steady."""
+    def on_frame(self, global_motion: float, scan) -> None:
+        """Called by the vision worker each frame. Once the view is steady, `scan()` returns
+        (reference_jpeg, proposed_areas) from the steady frames."""
         if self.mode != CALIBRATING or self.reference_jpeg is not None:
             return
         self._steady = self._steady + 1 if global_motion < self.steady_motion else 0
         if self._steady >= self.steady_frames:
-            self.reference_jpeg = encode_reference()
+            self.proposal = []
+            jpeg, proposal = scan()
+            self.proposal = proposal
+            self.reference_jpeg = jpeg
 
     def regions_saved(self) -> None:
         with self._lock:

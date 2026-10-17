@@ -6,7 +6,7 @@ Each tracked category runs a small state machine, advanced once per processed fr
        ▲                                                                                   │
        └──────────────────────────── commit location, request snapshot ────────────────────┘
 
-"Displaced" means a different region than the stored one, or farther than `move_threshold`
+"Displaced" means a different area label (see spatial.locate) than the stored one, or farther than `move_threshold`
 (normalized image units) from the stored position. A displaced object must stay within `jitter`
 of itself for `settle_seconds` and `stability` frames, with little local motion, to be confirmed.
 """
@@ -21,9 +21,7 @@ from datetime import datetime, timedelta, timezone
 
 from catalog import ALIASES, BY_CATEGORY, CATALOG, SUPPORTED  # noqa: F401  (re-exported)
 from database import Database
-from spatial import Region, region_for_point
-
-UNMARKED = "Elsewhere"  # region name for objects outside every configured region
+from spatial import Region, locate, place_phrase
 
 STABLE, POSSIBLE_CHANGE, MOVING, SETTLING = "STABLE", "POSSIBLE_CHANGE", "MOVING", "SETTLING"
 
@@ -142,7 +140,7 @@ class SpatialMemory:
     def _update(self, category: str, o: Observation, now: datetime, frame_id: int | None,
                 occluded: bool) -> dict | None:
         ts = now_iso(now)
-        region = region_for_point(o.x, o.y, self.regions) or UNMARKED
+        region = locate(o.x, o.y, self.regions)
         rec = self.db.get_by_category(category)
         tr = self._tracks.setdefault(category, _Track())
         tr.last_obs = now
@@ -286,11 +284,8 @@ def spoken_time(iso: str, now: datetime | None = None) -> str:
     return f"on {t.strftime('%b')} {t.day} at {clock}"
 
 
-def place_phrase(region: str) -> str:
-    return "somewhere outside the marked areas" if region == UNMARKED else f"on the {region.lower()}"
-
-
-def answer_query(text: str, db: Database, view_id: str | None = None) -> dict:
+def answer_query(text: str, db: Database, view_id: str | None = None,
+                 regions: list[Region] | None = None) -> dict:
     parsed = parse_query(text)
     if not parsed:
         names = [c["name"].lower() for c in CATALOG]
@@ -305,7 +300,7 @@ def answer_query(text: str, db: Database, view_id: str | None = None) -> dict:
         return {"found": False, "object": None, "snapshot": None, "category": category,
                 "answer": f"I haven't seen your {noun} yet."}
     snaps = db.get_snapshots(rec["object_id"], limit=1)
-    answer = f"I last saw your {noun} {place_phrase(rec['region'])} {spoken_time(rec['last_seen'])}"
+    answer = f"I last saw your {noun} {place_phrase(rec['region'], regions)} {spoken_time(rec['last_seen'])}"
     if view_id and rec.get("view_id") and rec["view_id"] != view_id:
         answer += ", before the camera was repositioned. I haven't spotted it since."
     elif rec["visible"]:

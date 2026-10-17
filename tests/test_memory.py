@@ -214,3 +214,27 @@ def test_settle_window_uses_time_not_just_frames(db, regions):
     c.wait(0.5)
     assert c.frames(1, obs())[0]["event_type"] == "first_seen"
     assert T0 < c.t < T0 + timedelta(seconds=2)
+
+
+def test_locate_adapts_to_whatever_areas_exist():
+    from spatial import Region, locate, place_phrase
+    couch = Region("Couch", 0.1, 0.5, 0.5, 0.9, kind="couch")
+    table = Region("Table", 0.3, 0.6, 0.45, 0.8, kind="dining table")
+    tv = Region("TV", 0.7, 0.1, 0.9, 0.3, kind="tv")
+    areas = [couch, table, tv]
+    assert locate(0.35, 0.7, areas) == "Table"  # most specific area wins
+    assert locate(0.2, 0.6, areas) == "Couch"
+    assert locate(0.55, 0.7, areas) == "Near Couch"
+    assert locate(0.95, 0.95, areas) == "Right side"
+    assert locate(0.1, 0.1, []) == "Left side" and locate(0.5, 0.5, []) == "Middle"
+    assert place_phrase("Couch", areas) == "on the couch"
+    assert place_phrase("TV", areas) == "by the tv"
+    assert place_phrase("Near Couch", areas) == "near the couch"
+    assert place_phrase("Left side") == "on the left side of the room"
+
+
+def test_no_areas_still_gives_honest_locations(db):
+    m = SpatialMemory(db, [])
+    Clock(m).frames(6, obs(pos=(0.1, 0.5)))
+    assert db.get_by_category("bottle")["region"] == "Left side"
+    assert "on the left side of the room" in answer_query("bottle", db, regions=[])["answer"]
