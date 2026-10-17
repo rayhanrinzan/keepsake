@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown, ScanLine, Settings } from 'lucide-react'
 import { api } from './lib/api'
-import { setVoiceConfig, speechOutputSupported, unlockSpeech } from './lib/voice'
+import { setVoiceConfig, speechOutputSupported, startWakeListener, stopWakeListener, unlockSpeech } from './lib/voice'
+import type { WakeState } from './lib/voice'
 import type { Health, MoveEvent, QueryResult, Region, TrackedObject } from './lib/api'
 import { ObjectList } from './components/ObjectList'
 import { ObjectDetail } from './components/ObjectDetail'
@@ -26,6 +27,14 @@ function readView(): View {
     return v === 'list' || v === 'settings' ? v : 'map'
   } catch {
     return 'map'
+  }
+}
+
+function readWakeOn(): boolean {
+  try {
+    return localStorage.getItem('keepsake.handsfree') !== 'off'
+  } catch {
+    return true
   }
 }
 
@@ -60,8 +69,9 @@ export default function App() {
   const [itemsOpen, setItemsOpen] = useState(() => window.innerWidth >= 768)
   const [scanning, setScanning] = useState(false)
   const [now, setNow] = useState(Date.now())
-  const [prompt, setPrompt] = useState<{ id: number; text: string } | null>(null)
-  const leftCount = useRef<number | null>(null) // departures already handled
+  const [wake, setWake] = useState<{ id: number; text: string } | null>(null)
+  const [wakeOn, setWakeOn] = useState(readWakeOn)
+  const [wakeState, setWakeState] = useState<WakeState>('off')
   const [voiceReady, setVoiceReady] = useState(!speechOutputSupported)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
@@ -80,13 +90,8 @@ export default function App() {
     try {
       const [h, o, e] = await Promise.all([api.health(), api.objects(), api.events(10)])
       setHealth(h)
-      // Someone just walked out of view: offer help. The first poll only sets the baseline.
-      const left = h.person_left_count ?? 0
-      if (leftCount.current !== null && left > leftCount.current) {
-        setPrompt({ id: left, text: 'Are you looking for something?' })
-        setView('list') // the voice prompt lives in the search panel
-      }
-      leftCount.current = left
+      // No automatic "Are you looking for something?" when someone walks out of view: usually
+      // they just put something down. Lookups start from a wake phrase instead (see below).
       setObjects(o)
       setEvents(e)
       setOffline(false)
@@ -112,6 +117,35 @@ export default function App() {
       /* storage unavailable */
     }
   }, [view])
+
+  // Hands-free: "where are my keys" (or "hey Keepsake") starts a lookup, like a smart speaker.
+  // Starts after the first click, because browsers need one before the mic and speech work.
+  const onWakeHeard = useCallback((said: string) => {
+    setWake({ id: Date.now(), text: said })
+    setView('list') // the conversation lives in the search panel
+  }, [])
+
+  useEffect(() => {
+    if (!wakeOn || !voiceReady) return
+    startWakeListener(onWakeHeard, setWakeState)
+    return () => stopWakeListener()
+  }, [wakeOn, voiceReady, onWakeHeard])
+
+  function toggleWake() {
+    if (wakeOn && wakeState === 'blocked') {
+      // Try again, e.g. after the user allowed the microphone.
+      stopWakeListener()
+      startWakeListener(onWakeHeard, setWakeState)
+      return
+    }
+    const next = !wakeOn
+    setWakeOn(next)
+    try {
+      localStorage.setItem('keepsake.handsfree', next ? 'on' : 'off')
+    } catch {
+      /* storage unavailable */
+    }
+  }
 
   useEffect(() => {
     if (!highlightId) return
@@ -156,7 +190,7 @@ export default function App() {
       onClick={() => setVoiceReady(unlockSpeech())}
       className="w-full rounded-xl bg-sunken px-4 py-3 text-left text-[14px] text-muted hover:text-ink"
     >
-      Click anywhere to turn on voice prompts, like “Are you looking for something?” when you leave the room.
+      Click anywhere to turn on voice. Then just say “Where are my keys?”
     </button>
   )
 
@@ -244,7 +278,15 @@ export default function App() {
               <p className="text-[13px] text-muted">{seenCount} of {objects.length} remembered</p>
               <h1 className="text-3xl leading-none font-semibold">Your items</h1>
             </div>
-            <SearchPanel onResult={onAnswer} prompt={prompt} objects={objects} />
+            <SearchPanel
+              onResult={onAnswer}
+              objects={objects}
+              wake={wake}
+              onWakeHandled={() => setWake(null)}
+              wakeState={wakeOn ? wakeState : 'off'}
+              onToggleWake={toggleWake}
+            />
+            <CameraPanel health={health} />
             <ObjectList objects={objects} now={now} highlightId={highlightId} onOpen={setOpenId} />
             <ActivityFeed events={events} />
           </main>

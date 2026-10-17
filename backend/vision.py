@@ -432,7 +432,8 @@ class VisionWorker(threading.Thread):
         m = getattr(self, "_items_model", None)
         if m is None:
             return []
-        res = m.predict(frame, conf=0.25, imgsz=640, device=self.device, verbose=False)[0]
+        res = m.predict(frame, conf=0.25, imgsz=640, device=self.device, verbose=False,
+                        agnostic_nms=True)[0]  # one label per physical box
         h, w = frame.shape[:2]
         best: dict[str, Observation] = {}  # one physical object per item: keep the strongest box
         for xyxy, cls, cf in zip(res.boxes.xyxy.tolist(), res.boxes.cls.int().tolist(), res.boxes.conf.tolist()):

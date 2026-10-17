@@ -231,7 +231,7 @@ def query(q: Query):
     obj = None
     if r["category"]:
         obj = next(o for o in all_objects() if o["category"] == r["category"])
-    return {"found": r["found"], "answer": r["answer"], "object": obj}
+    return {"found": r["found"], "answer": r["answer"], "object": obj, "category": r["category"]}
 
 
 # ---------- settings & privacy ----------
