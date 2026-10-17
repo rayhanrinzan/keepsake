@@ -213,6 +213,31 @@ def test_pickup_then_put_down_sequence():
         E.validate_event(e)
 
 
+def test_brief_wobble_of_a_worn_camera_keeps_the_pickup_evidence():
+    """Seen live on a chest mount: single unsteady frames kept wiping the hand evidence."""
+    f = Feed(InteractionDetector())
+    f.run(5, obs(KEYS, SPOT))
+    f.run(2, obs(KEYS, SPOT), hands=[hand_at(*SPOT)])
+    f.run(1, obs(KEYS, SPOT), hands=[hand_at(*SPOT)], cam=0.4)  # one wobble
+    for x in (0.48, 0.56):
+        f.run(1, obs(KEYS, (x, 0.6)), hands=[hand_at(x, 0.6)])
+    f.run(2, hands=[hand_at(0.9, 0.9)], cam=0.4)  # two wobbles while carrying
+    f.run(6, hands=[hand_at(0.9, 0.9)])
+    f.run(2, obs(KEYS, NEW_SPOT), hands=[hand_at(*NEW_SPOT)])
+    f.run(6, obs(KEYS, NEW_SPOT))
+    assert f.types() == [E.INTERACTION_CANDIDATE, E.POSSIBLE_PICKUP, E.PLACEMENT_CONFIRMED]
+
+
+def test_sustained_motion_still_resets_hand_evidence():
+    f = Feed(InteractionDetector())
+    f.run(5, obs(KEYS, SPOT))
+    f.run(2, obs(KEYS, SPOT), hands=[hand_at(*SPOT)])
+    f.run(3, obs(KEYS, SPOT), hands=[hand_at(*SPOT)], cam=0.4)  # a real pan: past the grace
+    for x in (0.48, 0.56):
+        f.run(1, obs(KEYS, (x, 0.6)), hands=[hand_at(x, 0.6)])
+    assert E.POSSIBLE_PICKUP not in f.types()
+
+
 def test_object_leaving_with_the_hand_is_a_possible_pickup():
     f = Feed(InteractionDetector())
     f.run(5, obs(KEYS, SPOT))

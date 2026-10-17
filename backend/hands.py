@@ -32,7 +32,7 @@ def _box(points, pad: float = 0.02) -> tuple[float, float, float, float]:
 
 class HandDetector:
     def __init__(self, model_path: str | Path | None = None, max_hands: int = 2,
-                 min_confidence: float = 0.5, width: int = 640):
+                 min_confidence: float = 0.3, width: int = 640):
         self.available = False
         self.reason = ""
         self.width = width
@@ -46,14 +46,22 @@ class HandDetector:
         model_path = Path(model_path or os.getenv("CTRLF_HAND_MODEL", str(DEFAULT_MODEL)))
         try:
             if model_path.exists():  # Tasks API (current MediaPipe)
+                import time
                 from mediapipe.tasks.python import BaseOptions
-                from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions
+                from mediapipe.tasks.python.vision import (HandLandmarker, HandLandmarkerOptions,
+                                                           RunningMode)
+                # VIDEO mode tracks a hand from frame to frame, so a partly visible hand found once
+                # isn't lost on the next frame (still-image mode re-detects from scratch each time).
                 lm = HandLandmarker.create_from_options(HandLandmarkerOptions(
                     base_options=BaseOptions(model_asset_path=str(model_path)), num_hands=max_hands,
-                    min_hand_detection_confidence=min_confidence))
+                    running_mode=RunningMode.VIDEO, min_hand_detection_confidence=min_confidence,
+                    min_hand_presence_confidence=min_confidence, min_tracking_confidence=min_confidence))
+                last_ms = [0]
 
                 def detect(rgb):
-                    res = lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
+                    ms = max(int(time.monotonic() * 1000), last_ms[0] + 1)  # must strictly increase
+                    last_ms[0] = ms
+                    res = lm.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ms)
                     return [Hand(_box(h), float(c[0].score))
                             for h, c in zip(res.hand_landmarks, res.handedness)]
             elif hasattr(mp, "solutions"):  # legacy API (older MediaPipe)

@@ -23,7 +23,7 @@ from modes import MONITORING, ModeController
 from presence import PresenceTracker
 from snapshots import SnapshotStore
 from spatial import Region, locate
-from wearable import InteractionDetector, WearableObserver
+from wearable import Hand, InteractionDetector, WearableObserver
 import events as E
 
 PHOTO_EVENTS = {E.OBJECT_OBSERVED, E.PLACEMENT_CONFIRMED}  # observation events that keep a photo
@@ -34,6 +34,10 @@ NOT_TRAINED: set = set()  # all 4 custom classes trained (glasses mAP50 0.99)
 log = logging.getLogger("keepsake.vision")
 
 PERSON = "person"  # detected to judge occlusion and whether someone is in the room
+# YOLO-World also looks for hands: from a chest mount they're usually partial, at the bottom edge,
+# where MediaPipe (which needs most of a hand) rarely fires. Both sources are merged.
+HAND = "hand"
+HAND_CONF = float(os.getenv("CTRLF_HAND_CONF", "0.2"))
 
 
 def pick_device() -> str:
@@ -92,6 +96,17 @@ class MotionDetector:
             keep[int(max(0, y0 - py) * h):int(min(1, y1 + py) * h) + 1,
                  int(max(0, x0 - px) * w):int(min(1, x1 + px) * w) + 1] = False
         return float(self.mask[keep].mean()) if keep.any() else 0.0
+
+
+def merge_hands(primary: list[Hand], extra: list[Hand], same: float = 0.3) -> list[Hand]:
+    """MediaPipe hands plus YOLO-World hand boxes that don't overlap one of them."""
+    def iou(a, b):
+        ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+        iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+        inter = ix * iy
+        union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+        return inter / union if union > 0 else 0.0
+    return list(primary) + [h for h in extra if all(iou(h.bbox, p.bbox) < same for p in primary)]
 
 
 class VisionWorker(threading.Thread):
@@ -171,7 +186,7 @@ class VisionWorker(threading.Thread):
             if "world" in str(self.model_path).lower():  # open vocabulary: tell it what to look for
                 from catalog import CATALOG
                 try:
-                    model.set_classes([c for c in SUPPORTED if c not in custom] + [PERSON])
+                    model.set_classes([c for c in SUPPORTED if c not in custom] + [PERSON, HAND])
                 except ImportError as e:  # YOLO-World encodes the prompts with CLIP
                     raise RuntimeError(
                         "YOLO-World needs CLIP: run .venv/bin/pip install -r backend/requirements.txt") from e
@@ -180,7 +195,9 @@ class VisionWorker(threading.Thread):
             log.exception("model load failed")
             self.status.update(camera="error", error=f"Model load failed: {e}")
             return
-        class_ids = [i for i, n in model.names.items() if self._label.get(n, n) in ALIASES or n == PERSON]
+        class_ids = [i for i, n in model.names.items()
+                     if self._label.get(n, n) in ALIASES or n in (PERSON, HAND)]
+        self._yolo_hands = HAND in model.names.values()
         seen_names = {self._label.get(n, n) for n in model.names.values()}
         missing = [c for c in ALIASES if c not in seen_names and c not in custom]
         if missing:  # e.g. a COCO-only model can't see keys or wallets
@@ -278,8 +295,11 @@ class VisionWorker(threading.Thread):
                     self.snapshots.submit(ev, self._frame_for(ev.get("frame_id")))
                 log.info("%s %s -> %s", ev["event_type"], ev["name"], ev["region"])
             if monitoring:
-                hands = self.hands.detect(frame) if self.hands else []
-                self._observe_wearable(obs, hands)
+                mp_hands = self.hands.detect(frame) if self.hands else []
+                hands = merge_hands(mp_hands, [Hand(o.bbox, o.confidence) for o in obs
+                                               if o.category == HAND and o.confidence >= HAND_CONF])
+                self.status["hands_in_view"] = {"mediapipe": len(mp_hands), "total": len(hands)}
+                self._observe_wearable([o for o in obs if o.category != HAND], hands)
         except Exception as e:  # noqa: BLE001
             log.exception("inference failed")
             if self.device != "cpu":  # e.g. an MPS op that isn't supported: fall back for good
@@ -300,7 +320,7 @@ class VisionWorker(threading.Thread):
         self.status["camera_motion"] = round(cam, 3)
         view = self.memory.view_id
         out = self.observer.update(obs, now, self._frame_id, cam, view)
-        if self.hands is not None and self.hands.available:
+        if (self.hands is not None and self.hands.available) or getattr(self, "_yolo_hands", False):
             out += self.interactions.update(obs, hands, now, self._frame_id, cam, view)
             self.status["interactions"] = {c: s for c, s in self.interactions.states().items() if s != "IDLE"}
         for ev in out:

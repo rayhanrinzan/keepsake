@@ -188,7 +188,8 @@ class _Interaction:
 class InteractionDetector:
     """Hand–object evidence: interaction_candidate -> possible_pickup -> placement_confirmed.
 
-    Sequence it looks for (camera steady throughout; any camera motion resets the partial state):
+    Sequence it looks for (camera steady throughout; sustained camera motion resets the partial state,
+    while up to `motion_grace` unsteady frames in a row are skipped: a worn camera wobbles constantly):
       1. the item rests untouched (its box becomes the anchor);
       2. a hand touches it for `near_frames` frames                    -> interaction_candidate
       3. it moves with the hand (`moved_frames` frames beyond `move_distance` of the anchor), or it
@@ -203,7 +204,7 @@ class InteractionDetector:
                  gone_frames: int = 3, settle_frames: int = 5, move_distance: float = 0.06,
                  reappear_tolerance: float = 0.06, jitter: float = 0.03,
                  max_camera_motion: float = 0.15, hold_seconds: float = 120.0,
-                 touch_margin: float = 0.25):
+                 touch_margin: float = 0.25, motion_grace: int = 2):
         self.camera_mode = camera_mode
         self.near_frames, self.moved_frames = near_frames, moved_frames
         self.gone_frames, self.settle_frames = gone_frames, settle_frames
@@ -212,6 +213,8 @@ class InteractionDetector:
         self.max_camera_motion = max_camera_motion
         self.hold = timedelta(seconds=hold_seconds)
         self.touch_margin = touch_margin
+        self.motion_grace = motion_grace
+        self._unsteady = 0  # consecutive frames over max_camera_motion
         self._st: dict[str, _Interaction] = {}
         self._gate = _FrameGate()
 
@@ -233,6 +236,9 @@ class InteractionDetector:
             return []
         best = best_per_category(observations)
         steady = camera_motion <= self.max_camera_motion
+        self._unsteady = 0 if steady else self._unsteady + 1
+        if 0 < self._unsteady <= self.motion_grace:
+            return []  # a brief wobble: skip this frame but keep the partial evidence
         out: list[dict] = []
         for cat in set(self._st) | set(best):
             st = self._st.setdefault(cat, _Interaction())
