@@ -17,6 +17,7 @@ import numpy as np
 
 from furniture import FURNITURE, propose_regions
 from catalog import MIN_CONF
+from departure import hold_reason
 from memory import ALIASES, Observation, SpatialMemory, display_name
 from modes import MONITORING, ModeController
 from snapshots import SnapshotStore
@@ -77,12 +78,13 @@ class VisionWorker(threading.Thread):
                  modes: ModeController, camera_index: int | str = 0, model_path: str = "yolo11n.pt",
                  conf: float = 0.4, fps: float = 5.0, frame_width: int = 1280,
                  camera_shift_motion: float = 0.5, scan_model_path: str | None = None,
-                 device: str | None = None, preview_width: int = 640):
+                 device: str | None = None, preview_width: int = 640, departures=None):
         super().__init__(daemon=True, name="vision")
         self.memory = memory
         self.regions = regions  # shared list; updated in place by calibration
         self.snapshots = snapshots
         self.modes = modes
+        self.departures = departures  # optional DepartureDetector fed with person boxes
         self.camera_index = camera_index
         self.model_path = model_path
         self.scan_model_path = scan_model_path  # larger model used only by Scan room
@@ -210,6 +212,7 @@ class VisionWorker(threading.Thread):
                                   "press Scan room to update its areas.")
         self.status["warning"] = warning
 
+        detect_failed = False
         try:
             obs = self._detect(model, frame, class_ids)
             for o in obs:
@@ -226,6 +229,14 @@ class VisionWorker(threading.Thread):
                 model.predictor = None
             self.status["error"] = f"Detection error: {e}"
             obs = []
+            detect_failed = True
+        if self.departures is not None:
+            try:
+                self.departures.feed([(o.bbox, o.confidence) for o in obs if o.category == PERSON],
+                                     hold_reason(self.modes, self.memory, self.status, detect_failed),
+                                     view_id=self.memory.view_id)
+            except Exception:  # noqa: BLE001 - departure alerts must never stop tracking
+                log.exception("departure detector failed")
         shown = [o for o in obs if o.category in MIN_CONF and o.confidence >= MIN_CONF[o.category]]
         self._publish(self._resize(frame, self.preview_width), shown)  # only what memory would accept
 

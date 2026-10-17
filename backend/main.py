@@ -14,6 +14,8 @@ from pydantic import BaseModel
 
 from catalog import CATALOG
 from database import Database
+from departure import DepartureDetector
+from departure_api import departure_router
 from memory import SpatialMemory, answer_query, parse_query
 from modes import ModeController, ModeError
 from snapshots import SnapshotStore
@@ -43,6 +45,7 @@ snapshots = SnapshotStore(db, env("SNAPSHOT_DIR", str(HERE / "data" / "snapshots
                           retention=int(env("SNAPSHOT_RETENTION", "20")),
                           cooldown_seconds=float(env("SNAPSHOT_COOLDOWN", "3")))
 modes = ModeController(memory)
+departures = DepartureDetector(db)  # possible departures for Departure Alerts (integrations/photon)
 _regions_before: list = []  # areas when the current scan started
 worker = None
 
@@ -61,7 +64,7 @@ async def lifespan(_: FastAPI):
                               fps=float(env("INFERENCE_FPS", "5")),
                               scan_model_path=env("SCAN_MODEL", str(HERE / "models" / ("yolo11m.pt" if (HERE / "models" / "yolo11m.pt").exists() else "yolo11n.pt"))),
                               frame_width=int(env("INFERENCE_WIDTH", "1280")),
-                              device=env("DEVICE", "") or None)
+                              device=env("DEVICE", "") or None, departures=departures)
         worker.start()
     yield
     if worker:
@@ -75,6 +78,7 @@ app = FastAPI(title="Keepsake", lifespan=lifespan)
 app.add_middleware(CORSMiddleware,
                    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_methods=["*"], allow_headers=["*"])
+app.include_router(departure_router(departures, db, memory, modes, regions, lambda: worker))
 
 
 # ---------- serializers ----------
