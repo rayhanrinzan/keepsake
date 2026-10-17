@@ -24,7 +24,7 @@ function Thumb({ o }: { o: TrackedObject }) {
     )
   }
   if (!noPng) return <img src={`/items/${o.icon}.png`} alt="" className="size-full object-contain p-1" onError={() => setNoPng(true)} />
-  return <Icon className="size-5 text-deep" strokeWidth={1.75} />
+  return <Icon className="size-5" strokeWidth={1.75} />
 }
 
 /** The items beside the map, in the title panel: picture, name and where it is. Hovering one lights up its pin; clicking shows its photo on the map. */
@@ -50,7 +50,7 @@ export function ItemPanel({ objects, activeId, onHover, onPick }: {
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium">{o.name}</span>
                 <span className="flex items-center gap-1.5 truncate text-[13px] text-muted">
-                  {o.seen && <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: pinColor(o) }} />}
+                  {o.seen && <span aria-hidden className="size-2 shrink-0 rounded-full ring-1 ring-black/15" style={{ background: pinColor(o) }} />}
                   {o.seen ? placeName(o.region!) : 'Not yet seen'}
                 </span>
               </span>

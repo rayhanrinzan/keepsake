@@ -137,7 +137,7 @@ export function ScanFlow({ health, regions, onSaved, onClose }: {
   const addArea = () =>
     setAreas((cur) => [...(cur ?? []), { id: nextId++, name: `Area ${(cur?.length ?? 0) + 1}`, kind: 'custom', x0: 0.35, y0: 0.35, x1: 0.65, y1: 0.65 }])
 
-  const primary = 'press flex h-11 items-center justify-center gap-2 rounded-xl bg-ink px-5 font-medium text-white hover:bg-ink/85 disabled:opacity-50'
+  const primary = 'press flex h-11 items-center justify-center gap-2 rounded-xl bg-deep px-5 font-medium text-white hover:bg-deep/85 disabled:opacity-50'
   const secondary = 'press flex h-11 items-center justify-center rounded-xl px-4 font-medium text-ink hover:bg-sunken disabled:opacity-50'
   const found = proposal.map((p) => p.name)
   const cancelButton = (

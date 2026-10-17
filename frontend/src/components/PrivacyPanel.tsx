@@ -33,7 +33,7 @@ export function PrivacyPanel({ health, onChanged }: { health: Health | null; onC
           aria-labelledby="capture-label"
           onClick={toggle}
           disabled={!health}
-          className={`relative h-6 w-10 shrink-0 rounded-full border border-transparent transition-[background-color] duration-150 ${capture ? 'bg-ink' : 'bg-hairline'}`}
+          className={`relative h-6 w-10 shrink-0 rounded-full border border-transparent transition-[background-color] duration-150 ${capture ? 'bg-deep' : 'bg-hairline'}`}
         >
           <span className={`absolute top-0.5 left-0.5 size-[18px] rounded-full bg-white shadow-ring transition-[translate] duration-150 motion-reduce:transition-none ${capture ? 'translate-x-4' : ''}`} />
         </button>

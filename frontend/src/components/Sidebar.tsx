@@ -1,22 +1,24 @@
-import { List, Map, ScanLine, Settings } from 'lucide-react'
+import { List, Map, Settings } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 export type View = 'map' | 'list' | 'settings'
 
+// Uneven blobs of colour like the logo: a dark patch top right, a dark patch bottom left, a pale glow underneath.
+const blobs = (pale: string, mid: string, dark: string) =>
+  `radial-gradient(45% 80% at 82% 15%, ${dark}, transparent 75%), radial-gradient(40% 90% at 12% 90%, ${dark}, transparent 75%), radial-gradient(70% 70% at 55% 110%, ${pale}, transparent 80%), ${mid}`
+
 const TABS: { key: View; label: string; icon: LucideIcon; bg: string }[] = [
-  { key: 'map', label: 'Map', icon: Map, bg: 'radial-gradient(ellipse at 50% 0%, #8fd0ff, #2f6fe0)' },
-  { key: 'list', label: 'List', icon: List, bg: 'radial-gradient(ellipse at 50% 0%, #b6f0e4, #3a9fbf)' },
-  { key: 'settings', label: 'Settings', icon: Settings, bg: 'radial-gradient(ellipse at 50% 0%, #e3b8f0, #7c7fe8)' },
+  { key: 'map', label: 'Map', icon: Map, bg: blobs('#a8dcff', '#5a9ff5', '#2f6fe0') },
+  { key: 'list', label: 'List', icon: List, bg: blobs('#d2f6ee', '#86c3d6', '#4f97bd') },
+  { key: 'settings', label: 'Settings', icon: Settings, bg: blobs('#f0d6f6', '#a9aaf2', '#7c7ce6') },
 ]
 
-/** Black sidebar on a laptop, bottom tab bar on a phone. */
-export function Sidebar({ view, onView, status, canScan, onScan }: {
+/** White sidebar on a laptop, bottom tab bar on a phone. */
+export function Sidebar({ view, onView, status }: {
   view: View
   onView: (v: View) => void
   status: ReactNode
-  canScan: boolean
-  onScan: () => void
 }) {
   return (
     <nav className="sidebar">
@@ -28,23 +30,14 @@ export function Sidebar({ view, onView, status, canScan, onScan }: {
             onClick={() => onView(key)}
             aria-current={view === key ? 'page' : undefined}
             className={`nav-tile press ${view === key ? 'on' : ''}`}
-            style={view === key ? { background: bg } : undefined}
+            style={{ background: bg }}
           >
             <Icon className="nav-glyph" strokeWidth={1.75} />
             <span className="nav-label">{label}</span>
           </button>
         ))}
       </div>
-      <div className="mt-auto hidden space-y-3 md:block">
-        {status}
-        <button
-          onClick={onScan}
-          disabled={!canScan}
-          className="press flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-white/10 text-[13px] font-medium text-white hover:bg-white/15 disabled:opacity-40"
-        >
-          <ScanLine className="size-4" strokeWidth={1.75} /> Scan room
-        </button>
-      </div>
+      <div className="mt-auto hidden md:block">{status}</div>
     </nav>
   )
 }

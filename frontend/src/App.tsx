@@ -5,6 +5,7 @@ import type { Health, MoveEvent, QueryResult, Region, TrackedObject } from './li
 import { ObjectList } from './components/ObjectList'
 import { ObjectDetail } from './components/ObjectDetail'
 import { PinLegend, RoomBlueprint } from './components/RoomBlueprint'
+import { PaperSheet } from './components/PaperSheet'
 import { ItemPanel } from './components/ItemPanel'
 import { Sidebar } from './components/Sidebar'
 import type { View } from './components/Sidebar'
@@ -36,7 +37,7 @@ function CameraStatus({ health, offline }: { health: Health | null; offline: boo
           : health.camera === 'disabled' ? ['Camera off', 'bg-faint']
             : ['Camera unavailable', 'bg-caution']
   return (
-    <span role="status" className="flex items-center gap-2 text-[13px] text-white/60">
+    <span role="status" className="flex items-center gap-2 text-[13px] text-muted">
       <span aria-hidden className={`size-2 rounded-full ${dot}`} />
       {label}
     </span>
@@ -132,62 +133,61 @@ export default function App() {
         view={view}
         onView={setView}
         status={<CameraStatus health={health} offline={offline} />}
-        canScan={canScan}
-        onScan={startScan}
       />
 
       {view === 'map' && (
-        <main className="relative h-svh overflow-hidden">
-          {/* The room fills the whole window; the title and items float over it on frosted glass. */}
-          <RoomBlueprint
-            regions={regions}
-            objects={objects}
-            highlightId={hoverId ?? selectedId ?? highlightId}
-            peekId={selectedId}
-            onSelect={pickPin}
-            onOpen={setOpenId}
-            trace={trace}
-          />
+        <main className="h-[calc(100svh-4.5rem)] p-3 sm:p-5 md:h-svh md:p-6">
+          <PaperSheet>
+            {/* The drawing starts to the right of the panel, so they don't overlap until you pan or zoom. */}
+            <div className="sheet-drawing">
+              <RoomBlueprint
+                regions={regions}
+                objects={objects}
+                highlightId={hoverId ?? selectedId ?? highlightId}
+                peekId={selectedId}
+                onSelect={pickPin}
+                onOpen={setOpenId}
+                trace={trace}
+              />
+            </div>
 
-          <div className="frost absolute top-4 left-4 flex max-h-[calc(100%-6rem)] w-[min(340px,calc(100%-2rem))] flex-col sm:top-6 sm:left-6 md:max-h-[calc(100%-3rem)]">
-            <div className="space-y-2 px-5 pt-4 pb-3">
-              <p className="text-[13px] text-muted tabular-nums">{seenCount} of {objects.length} remembered</p>
-              <h1 className="text-3xl leading-none font-semibold">Your room</h1>
-              {health?.sample && <p className="text-[13px] text-muted">Sample data for design work.</p>}
-              {offline && <p className="text-[13px] text-caution">Can&apos;t reach Keepsake. Start the backend to see updates.</p>}
-              {regions.length === 0 && (
-                <div className="space-y-2 pt-1">
+            {/* Title, items and legend sit on the sheet; the drawing can pass behind them. */}
+            <aside className="sheet-panel">
+              <div className="space-y-2 px-4 pt-4 pb-2">
+                <p className="text-[13px] text-muted">{seenCount} of {objects.length} remembered</p>
+                <h1 className="text-3xl leading-none font-semibold">Your room</h1>
+                {health?.sample && <p className="text-[13px] text-muted">Sample data for design work.</p>}
+                {offline && <p className="text-[13px] text-muted">Can&apos;t reach Keepsake. Start the backend to see updates.</p>}
+                {regions.length === 0 && (
                   <p className="text-[13px] text-muted">No furniture yet. Scan the room so the map can draw it.</p>
-                  <button onClick={startScan} disabled={!canScan} className="press button-primary">
-                    <ScanLine className="size-4" strokeWidth={1.75} /> Scan room
-                  </button>
+                )}
+              </div>
+              <button
+                onClick={() => setItemsOpen((v) => !v)}
+                aria-expanded={itemsOpen}
+                className="flex items-center justify-between px-4 pt-2 pb-1.5 text-[15px] font-semibold"
+              >
+                Items <span className="flex items-center gap-1 text-[13px] font-normal text-muted">{objects.length}
+                  <ChevronDown className={`size-4 transition-[rotate] duration-200 ${itemsOpen ? 'rotate-180' : ''}`} />
+                </span>
+              </button>
+              {itemsOpen && (
+                <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+                  <ItemPanel
+                    objects={objects}
+                    activeId={hoverId ?? selectedId ?? highlightId}
+                    onHover={setHoverId}
+                    onPick={(id) => setSelectedId((cur) => (cur === id ? null : id))}
+                  />
                 </div>
               )}
-            </div>
-            <button
-              onClick={() => setItemsOpen((v) => !v)}
-              aria-expanded={itemsOpen}
-              className="flex items-center justify-between px-5 pt-2 pb-1.5 text-[15px] font-semibold"
-            >
-              Items <span className="flex items-center gap-1 text-[13px] font-normal text-muted">{objects.length}
-                <ChevronDown className={`size-4 transition-[rotate] duration-200 ${itemsOpen ? 'rotate-180' : ''}`} />
-              </span>
-            </button>
-            {itemsOpen && (
-              <div className="no-scrollbar min-h-0 overflow-y-auto px-3 pb-3">
-                <ItemPanel
-                  objects={objects}
-                  activeId={hoverId ?? selectedId ?? highlightId}
-                  onHover={setHoverId}
-                  onPick={(id) => setSelectedId((cur) => (cur === id ? null : id))}
-                />
-              </div>
-            )}
-          </div>
+            </aside>
 
-          <div className="frost absolute top-4 right-4 hidden px-4 py-2.5 sm:top-6 sm:right-6 lg:block">
-            <PinLegend />
-          </div>
+            {/* Pin colours, in one row across the top right of the sheet. */}
+            <div className="sheet-legend">
+              <PinLegend />
+            </div>
+          </PaperSheet>
         </main>
       )}
 
@@ -198,16 +198,18 @@ export default function App() {
           </p>
         )}
         {offline && (
-          <p className="mb-4 rounded-xl bg-caution-soft px-4 py-3 text-caution">
+          <p className="mb-4 rounded-xl bg-sunken px-4 py-3 text-[14px] text-muted">
             Can&apos;t reach Keepsake. Showing the last memories loaded. Start the backend to see updates.
           </p>
         )}
 
         {view === 'list' && (
           <main className="space-y-5">
-            <h1 className="text-3xl font-semibold">List</h1>
+            <div className="space-y-2">
+              <p className="text-[13px] text-muted">{seenCount} of {objects.length} remembered</p>
+              <h1 className="text-3xl leading-none font-semibold">Your items</h1>
+            </div>
             <SearchPanel onResult={onAnswer} />
-            <p className="text-[13px] text-muted tabular-nums">{seenCount} of {objects.length} remembered</p>
             <ObjectList objects={objects} now={now} highlightId={highlightId} onOpen={setOpenId} />
             <ActivityFeed events={events} />
           </main>
@@ -215,12 +217,12 @@ export default function App() {
 
         {view === 'settings' && (
           <main className="space-y-5">
-            <h1 className="text-3xl font-semibold">Settings</h1>
+            <h1 className="text-3xl leading-none font-semibold">Settings</h1>
             <div className="grid gap-5 lg:grid-cols-2">
               <CameraPanel health={health} />
               <div className="space-y-5">
                 <PrivacyPanel health={health} onChanged={refresh} />
-                <button onClick={startScan} disabled={!canScan} className="press button-primary md:hidden">
+                <button onClick={startScan} disabled={!canScan} className="press button-primary self-start">
                   <ScanLine className="size-4" strokeWidth={1.75} /> Scan room
                 </button>
               </div>

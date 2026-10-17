@@ -19,6 +19,7 @@ import { SnapshotPhoto } from './SnapshotPhoto'
 const ROOM_W = 100
 const ROOM_D = 70
 const WALL = 24
+const DIM = 9 // how far the dimension lines sit outside the room
 const C = Math.cos(Math.PI / 6)
 const S = 0.5
 const MIN_ZOOM = 0.5
@@ -38,8 +39,9 @@ type Mode = '3d' | 'top' | 'camera'
 type Pt = [number, number]
 type Rect = { x0: number; y0: number; x1: number; y1: number }
 
-const LINE = 'rgba(47,111,224,0.75)'
-const GRID = 'rgba(47,111,224,0.08)'
+// Blueprint ink: dark blue lines on the light paper.
+const LINE = 'rgba(19,64,130,0.85)'
+const GRID = 'rgba(19,64,130,0.10)'
 
 /** Camera-space rectangle (0..1) to room units. */
 const toRoom = (r: Rect): Rect => ({ x0: r.x0 * ROOM_W, y0: r.y0 * ROOM_D, x1: r.x1 * ROOM_W, y1: r.y1 * ROOM_D })
@@ -128,16 +130,13 @@ export function RoomBlueprint({ regions, objects, highlightId, peekId, onSelect,
   const camH = CAM_W / (trace?.aspect ?? 16 / 9)
 
   const viewBox = useMemo(() => {
-    // The items panel floats over the left of the map, so the room sits a little right of center.
-    if (mode === 'top') return [-6 - f.w * 0.45, -10, f.w * 1.45 + 12, f.h + 18]
-    if (mode === 'camera') return [-6 - CAM_W * 0.45, -8, CAM_W * 1.45 + 12, camH + 16]
-    const pts = [p(0, 0, WALL), p(f.w, 0, WALL), p(0, f.h, WALL), p(f.w, f.h, 0), p(0, f.h, 0), p(f.w, 0, 0)]
+    if (mode === 'top') return [-8, -8, f.w + DIM + 20, f.h + DIM + 20]
+    if (mode === 'camera') return [-8, -8, CAM_W + 16, camH + 16]
+    const pts = [p(0, 0, WALL), p(f.w, 0, WALL), p(0, f.h, WALL), p(f.w + DIM, f.h + DIM, 0), p(0, f.h + DIM, 0), p(f.w + DIM, 0, WALL)]
     const xs = pts.map((q) => q[0])
     const ys = pts.map((q) => q[1])
     const pad = 8
-    const w = Math.max(...xs) - Math.min(...xs)
-    const left = w * 0.4
-    return [Math.min(...xs) - pad - left, Math.min(...ys) - pad, w + pad * 2 + left, Math.max(...ys) - Math.min(...ys) + pad * 2]
+    return [Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) - Math.min(...xs) + pad * 2, Math.max(...ys) - Math.min(...ys) + pad * 2]
   }, [mode, f.w, f.h, p, camH])
 
   // Coordinates of a screen point inside the viewBox.
@@ -263,11 +262,16 @@ export function RoomBlueprint({ regions, objects, highlightId, peekId, onSelect,
         role="img"
         aria-label="Blueprint of the room with a pin for each remembered item"
       >
+        <defs>
+          <marker id="dim-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="2.6" markerHeight="2.6" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+            <path d="M0 1 L10 5 L0 9 Z" fill={LINE} />
+          </marker>
+        </defs>
         <g transform={`translate(${view.tx} ${view.ty}) scale(${view.s})`}>
           {isCam ? (
             <>
               {/* What the camera sees, traced into blueprint lines, with the scanned areas on top */}
-              <rect {...ns} x={0} y={0} width={CAM_W} height={camH} fill="rgba(88,168,248,0.04)" stroke={LINE} strokeWidth={1.2} />
+              <rect {...ns} x={0} y={0} width={CAM_W} height={camH} fill="rgba(255,255,255,0.03)" stroke={LINE} strokeWidth={1.2} />
               {trace ? (
                 <image href={trace.url} x={0} y={0} width={CAM_W} height={camH} preserveAspectRatio="none" />
               ) : (
@@ -283,7 +287,7 @@ export function RoomBlueprint({ regions, objects, highlightId, peekId, onSelect,
                     y={reg.y0 * camH}
                     width={(reg.x1 - reg.x0) * CAM_W}
                     height={(reg.y1 - reg.y0) * camH}
-                    fill="rgba(124,194,254,0.12)"
+                    fill="rgba(255,255,255,0.08)"
                     stroke={LINE}
                     strokeDasharray="4 3"
                   />
@@ -294,7 +298,7 @@ export function RoomBlueprint({ regions, objects, highlightId, peekId, onSelect,
           ) : (
           <>
           {/* Floor and its grid */}
-          <polygon points={poly([p(0, 0), p(f.w, 0), p(f.w, f.h), p(0, f.h)])} fill="rgba(88,168,248,0.05)" />
+          <polygon points={poly([p(0, 0), p(f.w, 0), p(f.w, f.h), p(0, f.h)])} fill="rgba(255,255,255,0.04)" />
           {Array.from({ length: Math.floor(f.w / 5) + 1 }, (_, i) => (
             <line key={`gx${i}`} {...ns} x1={p(i * 5, 0)[0]} y1={p(i * 5, 0)[1]} x2={p(i * 5, f.h)[0]} y2={p(i * 5, f.h)[1]} stroke={GRID} />
           ))}
@@ -305,11 +309,27 @@ export function RoomBlueprint({ regions, objects, highlightId, peekId, onSelect,
           {/* Back walls (3D only); the front two are cut away so you can see in */}
           {is3d && (
             <>
-              <polygon {...ns} points={poly([p(0, 0), p(0, f.h), p(0, f.h, WALL), p(0, 0, WALL)])} fill="rgba(88,168,248,0.06)" stroke={LINE} strokeWidth={1.4} />
-              <polygon {...ns} points={poly([p(0, 0), p(f.w, 0), p(f.w, 0, WALL), p(0, 0, WALL)])} fill="rgba(88,168,248,0.10)" stroke={LINE} strokeWidth={1.4} />
+              <polygon {...ns} points={poly([p(0, 0), p(0, f.h), p(0, f.h, WALL), p(0, 0, WALL)])} fill="rgba(255,255,255,0.2)" stroke={LINE} strokeWidth={1.4} />
+              <polygon {...ns} points={poly([p(0, 0), p(f.w, 0), p(f.w, 0, WALL), p(0, 0, WALL)])} fill="rgba(255,255,255,0.3)" stroke={LINE} strokeWidth={1.4} />
             </>
           )}
           <polygon {...ns} points={poly([p(0, 0), p(f.w, 0), p(f.w, f.h), p(0, f.h)])} fill="none" stroke={LINE} strokeWidth={is3d ? 1.2 : 2} />
+
+          {/* Dimension lines, like a drawing: dotted extension lines and a measured line with arrows */}
+          <g className="blueprint-dim">
+            <line {...ns} x1={p(0, f.h)[0]} y1={p(0, f.h)[1]} x2={p(0, f.h + DIM + 2)[0]} y2={p(0, f.h + DIM + 2)[1]} strokeDasharray="1.5 2" />
+            <line {...ns} x1={p(f.w, f.h)[0]} y1={p(f.w, f.h)[1]} x2={p(f.w, f.h + DIM + 2)[0]} y2={p(f.w, f.h + DIM + 2)[1]} strokeDasharray="1.5 2" />
+            <line {...ns} x1={p(0, f.h + DIM)[0]} y1={p(0, f.h + DIM)[1]} x2={p(f.w, f.h + DIM)[0]} y2={p(f.w, f.h + DIM)[1]} markerStart="url(#dim-arrow)" markerEnd="url(#dim-arrow)" />
+            <line {...ns} x1={p(f.w, 0)[0]} y1={p(f.w, 0)[1]} x2={p(f.w + DIM + 2, 0)[0]} y2={p(f.w + DIM + 2, 0)[1]} strokeDasharray="1.5 2" />
+            <line {...ns} x1={p(f.w, f.h)[0]} y1={p(f.w, f.h)[1]} x2={p(f.w + DIM + 2, f.h)[0]} y2={p(f.w + DIM + 2, f.h)[1]} strokeDasharray="1.5 2" />
+            <line {...ns} x1={p(f.w + DIM, 0)[0]} y1={p(f.w + DIM, 0)[1]} x2={p(f.w + DIM, f.h)[0]} y2={p(f.w + DIM, f.h)[1]} markerStart="url(#dim-arrow)" markerEnd="url(#dim-arrow)" />
+            {is3d && (
+              <>
+                <line {...ns} x1={p(f.w, 0, WALL)[0]} y1={p(f.w, 0, WALL)[1]} x2={p(f.w + DIM + 2, 0, WALL)[0]} y2={p(f.w + DIM + 2, 0, WALL)[1]} strokeDasharray="1.5 2" />
+                <line {...ns} x1={p(f.w + DIM, 0, 0)[0]} y1={p(f.w + DIM, 0, 0)[1]} x2={p(f.w + DIM, 0, WALL)[0]} y2={p(f.w + DIM, 0, WALL)[1]} markerStart="url(#dim-arrow)" markerEnd="url(#dim-arrow)" />
+              </>
+            )}
+          </g>
 
           {/* Scanned furniture as see-through boxes */}
           {furniture.map(({ reg, r, h }) => {
@@ -320,9 +340,9 @@ export function RoomBlueprint({ regions, objects, highlightId, peekId, onSelect,
             const front = p(r.x1, r.y1, 0)
             return (
               <g key={reg.name}>
-                {is3d && <polygon {...ns} points={poly(left)} fill="rgba(47,111,224,0.20)" stroke={LINE} />}
-                {is3d && <polygon {...ns} points={poly(right)} fill="rgba(47,111,224,0.11)" stroke={LINE} />}
-                <polygon {...ns} points={poly(top)} fill="rgba(124,194,254,0.22)" stroke={LINE} />
+                {is3d && <polygon {...ns} points={poly(left)} fill="rgba(255,255,255,0.5)" stroke={LINE} />}
+                {is3d && <polygon {...ns} points={poly(right)} fill="rgba(255,255,255,0.3)" stroke={LINE} />}
+                <polygon {...ns} points={poly(top)} fill="rgba(255,255,255,0.65)" stroke={LINE} />
                 <text
                   x={is3d ? front[0] : r.x0 + 0.8}
                   y={is3d ? front[1] + 4 : r.y0 + 3}
@@ -355,7 +375,7 @@ export function RoomBlueprint({ regions, objects, highlightId, peekId, onSelect,
                 {is3d && <line {...ns} x1={base[0]} y1={base[1]} x2={px} y2={py} stroke={color} strokeDasharray="2 2" />}
                 {highlighted && <circle className="blueprint-ring" cx={px} cy={py} r={6.5} fill="none" stroke={color} strokeWidth={0.8} />}
                 <circle cx={px} cy={py} r={4.2} fill={color} opacity={0.22} />
-                <circle cx={px} cy={py} r={2.3} fill={dashed ? '#fff' : color} stroke={color} strokeWidth={0.7} strokeDasharray={dashed ? '1 0.7' : undefined} />
+                <circle cx={px} cy={py} r={2.3} fill={dashed ? '#e4f2ff' : color} stroke={color} strokeWidth={0.7} strokeDasharray={dashed ? '1 0.7' : undefined} />
                 <text x={px} y={py - 5} className="blueprint-name" textAnchor="middle">{o.name}</text>
               </g>
             )
@@ -384,7 +404,7 @@ export function RoomBlueprint({ regions, objects, highlightId, peekId, onSelect,
         </div>
       )}
 
-      <div className="absolute right-4 bottom-24 flex flex-wrap justify-end gap-2 sm:right-6 md:bottom-6">
+      <div className="absolute right-4 bottom-4 flex flex-wrap justify-end gap-2 sm:right-6 sm:bottom-6">
         <div className="seg">
           <button className={mode === '3d' ? 'on' : ''} onClick={() => setMode('3d')} aria-label="3D view"><Box className="size-4" /> 3D</button>
           <button className={mode === 'top' ? 'on' : ''} onClick={() => setMode('top')} aria-label="Top-down view"><Square className="size-4" /> Top</button>
