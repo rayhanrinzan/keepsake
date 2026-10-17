@@ -27,7 +27,7 @@ import events as E
 PHOTO_EVENTS = {E.OBJECT_OBSERVED, E.PLACEMENT_CONFIRMED}  # observation events that keep a photo
 
 # Classes in items.pt with no real training photos yet: leave these to YOLO-World.
-NOT_TRAINED = {"glasses"}
+NOT_TRAINED: set = set()  # all 4 custom classes trained (glasses mAP50 0.99)
 
 log = logging.getLogger("keepsake.vision")
 
