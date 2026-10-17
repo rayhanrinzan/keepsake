@@ -27,10 +27,15 @@ def env(name: str, default: str) -> str:
     return os.getenv(f"CTRLF_{name}", default)
 
 
+# Our own trained model (last-seen/train.py) if it's installed, otherwise YOLO-World as a fallback.
+_ITEMS_MODEL = HERE / "models" / "items.pt"
+DEFAULT_MODEL = str(_ITEMS_MODEL if _ITEMS_MODEL.exists() else HERE / "models" / "yolov8s-worldv2.pt")
+DEFAULT_CONF = "0.35" if _ITEMS_MODEL.exists() else "0.15"
+
 regions = load_regions()
 db = Database(env("DB_PATH", str(HERE / "data" / "ctrlf.db")))
 memory = SpatialMemory(db, regions, stability=int(env("STABILITY_FRAMES", "4")),
-                       min_confidence=float(env("CONFIDENCE", "0.15")),
+                       min_confidence=float(env("CONFIDENCE", DEFAULT_CONF)),
                        absence_seconds=float(env("ABSENCE_SECONDS", "2.0")),
                        move_threshold=float(env("MOVE_THRESHOLD", "0.06")),
                        settle_seconds=float(env("SETTLE_SECONDS", "0.8")))
@@ -50,8 +55,8 @@ async def lifespan(_: FastAPI):
         source = env("CAMERA_INDEX", "0")  # webcam index, or a video file path for testing
         worker = VisionWorker(memory, regions, snapshots, modes,
                               camera_index=int(source) if source.isdigit() else source,
-                              model_path=env("MODEL", str(HERE / "models" / "yolov8s-worldv2.pt")),
-                              conf=float(env("CONFIDENCE", "0.15")),
+                              model_path=env("MODEL", DEFAULT_MODEL),
+                              conf=float(env("CONFIDENCE", DEFAULT_CONF)),
                               fps=float(env("INFERENCE_FPS", "5")),
                               scan_model_path=env("SCAN_MODEL", str(HERE / "models" / ("yolo11m.pt" if (HERE / "models" / "yolo11m.pt").exists() else "yolo11n.pt"))),
                               frame_width=int(env("INFERENCE_WIDTH", "1280")),

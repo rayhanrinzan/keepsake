@@ -1,21 +1,20 @@
 """The objects Keepsake remembers. One physical object per category (hackathon assumption).
 
-`category` is the text prompt given to the open-vocabulary detector (YOLO-World), so it can be any\nshort description of the object.
+`category` is the class name in our trained model (models/items.pt, made by last-seen/train.py).
+`prompt` is the text used instead when falling back to YOLO-World (no items.pt yet).
 Edit this list to change what Keepsake tracks; the API and frontend read it from /api/catalog.
 """
 from __future__ import annotations
 
 CATALOG: list[dict] = [
-    {"category": "water bottle", "name": "Water Bottle", "icon": "bottle",
-     "aliases": ["water bottle", "bottle", "drink", "flask"]},
-    {"category": "keys", "name": "Keys", "icon": "keys",
+    {"category": "glasses_case", "prompt": "glasses case", "name": "Glasses", "icon": "glasses",
+     "aliases": ["glasses", "eyeglasses", "spectacles", "glasses case", "reading glasses"]},
+    {"category": "keys", "prompt": "car key", "name": "Keys", "icon": "keys",
      "aliases": ["keys", "key", "car keys", "house keys", "keychain"]},
-    {"category": "earbuds", "name": "AirPods", "icon": "airpods",
-     "aliases": ["airpods", "air pods", "earbuds", "earphones", "headphones", "airpods case"]},
-    {"category": "wallet", "name": "Wallet", "icon": "wallet",
+    {"category": "wallet", "prompt": "leather wallet", "name": "Wallet", "icon": "wallet",
      "aliases": ["wallet", "purse", "card holder"]},
-    {"category": "glasses", "name": "Glasses", "icon": "glasses",
-     "aliases": ["glasses", "eyeglasses", "spectacles", "glasses case", "sunglasses"]},
+    {"category": "airpods", "prompt": "airpods case", "name": "AirPods", "icon": "airpods",
+     "aliases": ["airpods", "air pods", "earbuds", "earphones", "headphones", "airpods case"]},
 ]
 
 for _item in CATALOG:

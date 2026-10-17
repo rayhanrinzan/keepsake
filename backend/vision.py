@@ -10,6 +10,8 @@ import threading
 import time
 from collections import deque
 
+from pathlib import Path
+
 import cv2
 import numpy as np
 
@@ -84,6 +86,7 @@ class VisionWorker(threading.Thread):
         self.model_path = model_path
         self.scan_model_path = scan_model_path  # larger model used only by Scan room
         self._scan_model = None
+        self._label: dict[str, str] = {}  # YOLO-World prompt -> catalog category
         self.conf = conf
         self.interval = 1.0 / max(fps, 0.5)
         self.frame_width = frame_width  # detection resolution; small items across a room need ~1280
@@ -116,13 +119,15 @@ class VisionWorker(threading.Thread):
             settings.update({"sync": False})  # no Ultralytics telemetry
             model = YOLO(self.model_path)
             if "world" in str(self.model_path).lower():  # open vocabulary: tell it what to look for
-                from catalog import SUPPORTED
-                model.set_classes(SUPPORTED + [PERSON])
+                from catalog import CATALOG
+                prompts = [c.get("prompt", c["category"]) for c in CATALOG]
+                model.set_classes(prompts + [PERSON])
+                self._label = {c.get("prompt", c["category"]): c["category"] for c in CATALOG}
         except Exception as e:  # noqa: BLE001
             log.exception("model load failed")
             self.status.update(camera="error", error=f"Model load failed: {e}")
             return
-        class_ids = [i for i, n in model.names.items() if n in ALIASES or n == PERSON]
+        class_ids = [i for i, n in model.names.items() if self._label.get(n, n) in ALIASES or n == PERSON]
 
         cap = None
         failures = 0
@@ -269,7 +274,7 @@ class VisionWorker(threading.Thread):
         return buf.tobytes() if ok else None
 
     def _detect(self, model, frame: np.ndarray, class_ids: list[int]) -> list[Observation]:
-        res = model.track(frame, persist=True, tracker="bytetrack.yaml", conf=self.conf,
+        res = model.track(frame, persist=True, tracker=str(Path(__file__).parent / "tracker_lowconf.yaml") if "world" in str(self.model_path).lower() else "bytetrack.yaml", conf=self.conf,
                           imgsz=self.frame_width, device=self.device,
                           classes=class_ids, verbose=False)[0]
         h, w = frame.shape[:2]
@@ -280,7 +285,7 @@ class VisionWorker(threading.Thread):
         for xyxy, cls, cf, tid in zip(res.boxes.xyxy.tolist(), res.boxes.cls.int().tolist(),
                                       res.boxes.conf.tolist(), ids):
             x0, y0, x1, y1 = xyxy[0] / w, xyxy[1] / h, xyxy[2] / w, xyxy[3] / h
-            obs.append(Observation(category=model.names[cls], confidence=float(cf),
+            obs.append(Observation(category=self._label.get(model.names[cls], model.names[cls]), confidence=float(cf),
                                    x=(x0 + x1) / 2, y=(y0 + y1) / 2, track_id=tid,
                                    bbox=(x0, y0, x1, y1)))
         return obs
