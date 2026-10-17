@@ -1,4 +1,4 @@
-import { Backpack, BookOpen, Coffee, Laptop, Milk, Mouse, Package, Smartphone, Tv } from 'lucide-react'
+import { Backpack, BookOpen, Coffee, Glasses, Headphones, KeyRound, Laptop, Milk, Mouse, Package, Smartphone, Tv, Wallet } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { TrackedObject } from './api'
 
@@ -11,6 +11,10 @@ const ICONS: Record<string, LucideIcon> = {
   backpack: Backpack,
   remote: Tv,
   mouse: Mouse,
+  keys: KeyRound,
+  airpods: Headphones,
+  wallet: Wallet,
+  glasses: Glasses,
 }
 
 export const iconFor = (icon: string): LucideIcon => ICONS[icon] ?? Package

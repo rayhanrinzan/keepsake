@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 from furniture import FURNITURE, propose_regions
+from catalog import MIN_CONF
 from memory import ALIASES, Observation, SpatialMemory, display_name
 from modes import MONITORING, ModeController
 from snapshots import SnapshotStore
@@ -121,11 +122,22 @@ class VisionWorker(threading.Thread):
             from ultralytics import YOLO, settings
             settings.update({"sync": False})  # no Ultralytics telemetry
             model = YOLO(self.model_path)
+            if "world" in str(self.model_path).lower():  # open vocabulary: tell it what to look for
+                from catalog import SUPPORTED
+                try:
+                    model.set_classes(SUPPORTED + [PERSON])
+                except ImportError as e:  # YOLO-World encodes the prompts with CLIP
+                    raise RuntimeError(
+                        "YOLO-World needs CLIP: run .venv/bin/pip install -r backend/requirements.txt") from e
         except Exception as e:  # noqa: BLE001
             log.exception("model load failed")
             self.status.update(camera="error", error=f"Model load failed: {e}")
             return
         class_ids = [i for i, n in model.names.items() if n in ALIASES or n == PERSON]
+        missing = [c for c in ALIASES if c not in model.names.values()]
+        if missing:  # e.g. a COCO-only model can't see keys or wallets
+            log.warning("detector %s can't detect: %s", self.model_path, ", ".join(missing))
+        self.status["undetectable"] = missing
 
         cap = None
         failures = 0
@@ -208,7 +220,8 @@ class VisionWorker(threading.Thread):
                 model.predictor = None
             self.status["error"] = f"Detection error: {e}"
             obs = []
-        self._publish(self._resize(frame, self.preview_width), [o for o in obs if o.category != PERSON])
+        shown = [o for o in obs if o.category in MIN_CONF and o.confidence >= MIN_CONF[o.category]]
+        self._publish(self._resize(frame, self.preview_width), shown)  # only what memory would accept
 
     def _scan(self, model, reference: np.ndarray) -> tuple[bytes | None, list[dict]]:
         """Scan room: detect furniture over the last few (steady) frames and propose areas."""
