@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ScanLine } from 'lucide-react'
+import { ScanLine, Settings } from 'lucide-react'
 import { api } from './lib/api'
-import { speechOutputSupported, unlockSpeech } from './lib/voice'
+import { setVoiceConfig, speechOutputSupported, unlockSpeech } from './lib/voice'
 import type { Health, MoveEvent, QueryResult, Region, TrackedObject } from './lib/api'
 import { ObjectList } from './components/ObjectList'
 import { ObjectDetail } from './components/ObjectDetail'
@@ -11,6 +11,7 @@ import { CameraPanel } from './components/CameraPanel'
 import { ActivityFeed } from './components/ActivityFeed'
 import { PrivacyPanel } from './components/PrivacyPanel'
 import { ScanFlow } from './components/ScanFlow'
+import { SettingsDialog } from './components/SettingsDialog'
 
 const POLL_MS = 1500
 type View = 'list' | 'map'
@@ -54,6 +55,7 @@ export default function App() {
   const [prompt, setPrompt] = useState<{ id: number; text: string } | null>(null)
   const leftCount = useRef<number | null>(null) // departures already handled
   const [voiceReady, setVoiceReady] = useState(!speechOutputSupported)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
     // The first click or key press anywhere lets the app speak on its own afterwards.
@@ -88,6 +90,7 @@ export default function App() {
 
   useEffect(() => {
     api.regions().then(setRegions).catch(() => setOffline(true))
+    api.voice().then((v) => setVoiceConfig({ provider: v.provider, voice_id: v.voice_id, speed: v.speed })).catch(() => undefined)
     refresh()
     const id = setInterval(refresh, POLL_MS)
     return () => clearInterval(id)
@@ -147,6 +150,13 @@ export default function App() {
             className="press flex h-10 items-center gap-2 rounded-xl border border-transparent bg-surface px-3.5 text-[14px] font-medium shadow-ring hover:bg-sunken disabled:opacity-50"
           >
             <ScanLine className="size-4" strokeWidth={1.75} /> Scan room
+          </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Settings"
+            className="press flex size-10 items-center justify-center rounded-xl border border-transparent bg-surface shadow-ring hover:bg-sunken"
+          >
+            <Settings className="size-4" strokeWidth={1.75} />
           </button>
         </div>
       </header>
@@ -209,6 +219,7 @@ export default function App() {
         </aside>
       </div>
 
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {open && <ObjectDetail key={open.object_id} o={open} now={now} onClose={() => setOpenId(null)} />}
       {scanning && health && health.mode !== 'MONITORING' && (
         <ScanFlow health={health} regions={regions} onSaved={setRegions} onClose={closeScan} />

@@ -81,6 +81,19 @@ export interface QueryResult {
   object: TrackedObject | null
 }
 
+export type VoiceProvider = 'browser' | 'grok'
+
+export interface VoiceConfig {
+  provider: VoiceProvider
+  voice_id: string
+  speed: number
+}
+
+export interface VoiceInfo extends VoiceConfig {
+  grok_available: boolean
+  voices: { voice_id: string; name: string }[]
+}
+
 export class ApiError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -121,6 +134,22 @@ export const api = {
   reposition: (step: 'start' | 'cancel' | 'finish' | 'resume') => req<{ mode: Mode }>(`/reposition/${step}`, json('POST')),
   saveRegions: (regions: { name: string; kind: string; camera: number[] }[]) =>
     req<Region[]>('/regions', json('PUT', { regions })),
+  voice: () => req<VoiceInfo>('/voice'),
+  setVoice: (v: VoiceConfig) => req<VoiceInfo>('/voice', json('PUT', v)),
+  /** Grok speech for one sentence, as an MP3 blob. Throws ApiError (503 no key, 502 Grok failed). */
+  tts: async (text: string, opts: { voice_id?: string; speed?: number } = {}) => {
+    let res: Response
+    try {
+      res = await fetch('/api/tts', json('POST', { text, ...opts }))
+    } catch {
+      throw new ApiError(0, "Can't reach Keepsake. Is the backend running?")
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      throw new ApiError(res.status, body?.detail ?? `Speech failed (${res.status})`)
+    }
+    return res.blob()
+  },
   cameraUrl: '/api/camera',
   frameUrl: '/api/camera/frame',
   referenceUrl: '/api/calibration/reference',

@@ -10,7 +10,9 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from catalog import CATALOG
 from database import Database
@@ -18,6 +20,7 @@ from memory import SpatialMemory, answer_query, parse_query
 from modes import ModeController, ModeError
 from snapshots import SnapshotStore
 from spatial import load_regions, save_regions, validate_regions
+from voice import SPEED_RANGE, GrokTTS, TTSError, load_env_file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 HERE = Path(__file__).parent
@@ -25,6 +28,9 @@ HERE = Path(__file__).parent
 
 def env(name: str, default: str) -> str:
     return os.getenv(f"CTRLF_{name}", default)
+
+
+load_env_file(env("ENV_FILE", str(HERE.parent / ".env")))  # e.g. XAI_API_KEY for the Grok voice
 
 
 # Our own trained model (last-seen/train.py) if it's installed, otherwise YOLO-World as a fallback.
@@ -45,6 +51,7 @@ snapshots = SnapshotStore(db, env("SNAPSHOT_DIR", str(HERE / "data" / "snapshots
 modes = ModeController(memory)
 _regions_before: list = []  # areas when the current scan started
 worker = None
+grok = GrokTTS(os.environ["XAI_API_KEY"]) if os.getenv("XAI_API_KEY") else None
 
 
 @asynccontextmanager
@@ -206,6 +213,56 @@ def get_settings():
 def put_settings(s: Settings):
     snapshots.enabled = s.capture_enabled
     return {"capture_enabled": snapshots.enabled}
+
+
+# ---------- voice (Grok text to speech) ----------
+
+class VoiceSettings(BaseModel):
+    provider: Literal["browser", "grok"]
+    voice_id: str = Field(min_length=1, max_length=100)
+    speed: float = Field(ge=SPEED_RANGE[0], le=SPEED_RANGE[1])
+
+
+def voice_settings() -> dict:
+    default = "grok" if grok else "browser"
+    return {"provider": db.get_setting("voice_provider", default),
+            "voice_id": db.get_setting("voice_id", "eve"),
+            "speed": float(db.get_setting("voice_speed", "1.0"))}
+
+
+@app.get("/api/voice")
+def get_voice():
+    from voice import DEFAULT_VOICES
+    return {**voice_settings(), "grok_available": grok is not None,
+            "voices": grok.voices() if grok else DEFAULT_VOICES}
+
+
+@app.put("/api/voice")
+def put_voice(v: VoiceSettings):
+    db.set_setting("voice_provider", v.provider)
+    db.set_setting("voice_id", v.voice_id)
+    db.set_setting("voice_speed", str(v.speed))
+    return get_voice()
+
+
+class SpeakIn(BaseModel):
+    text: str = Field(min_length=1, max_length=1000, pattern=r"\S")
+    voice_id: str | None = Field(default=None, min_length=1, max_length=100)  # Settings preview
+    speed: float | None = Field(default=None, ge=SPEED_RANGE[0], le=SPEED_RANGE[1])
+
+
+@app.post("/api/tts")
+def tts(body: SpeakIn):
+    """Speak one sentence in the Grok voice. Only this text is sent to xAI."""
+    if grok is None:
+        raise HTTPException(503, "No Grok key. Add XAI_API_KEY to .env and restart the backend.")
+    s = voice_settings()
+    try:
+        audio = grok.synthesize(body.text.strip(), body.voice_id or s["voice_id"],
+                                body.speed if body.speed is not None else s["speed"])
+    except TTSError as e:
+        raise HTTPException(502, str(e)) from e
+    return Response(audio, media_type="audio/mpeg")
 
 
 @app.delete("/api/memory")

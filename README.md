@@ -85,6 +85,7 @@ For Continuity Camera, keep the iPhone locked and still, with its **back** camer
   3. Rename, adjust, delete or add areas, then press **Save and resume**.
 
   Old photos and locations are kept and marked "Not rechecked since scan". When an item is seen again it's **reconfirmed**: you get a fresh photo, but it isn't logged as a move. If the whole view shifts unexpectedly, Keepsake briefly stops updating and suggests scanning again.
+- **Settings → Customize voice** (gear icon, top right): pick the **Grok voice** (xAI text to speech: Eve, Ara, Rex, Sal, Leo or any voice your account lists) or the browser's built-in voice, set the speed (0.7–1.5×), and press **Preview**. Grok needs `XAI_API_KEY` (an `xai-…` key from [console.x.ai](https://console.x.ai)) in the repo's `.env`; restart the backend after adding it. If Grok fails, Keepsake falls back to the browser voice.
 - **Privacy panel:** pause photo saving (locations still update), or clear all memories and photos.
 
 ## Configuration
@@ -129,6 +130,8 @@ All settings are optional environment variables, read at backend start. See [.en
 | POST | `/api/reposition/{start,cancel,finish,resume}` | Scan room: pause → scan → resume |
 | GET | `/api/calibration/reference` | Steady reference photo from the last scan (kept in memory) |
 | GET/PUT | `/api/regions` | Read or save room areas (`{name, kind, camera}`) |
+| GET/PUT | `/api/voice` | Voice settings `{provider, voice_id, speed}`, plus available Grok voices |
+| POST | `/api/tts` | `{"text": …}` → MP3 in the Grok voice (key stays server-side) |
 | GET | `/api/camera/frame` | Newest annotated frame as one JPEG (the dashboard polls this about 5×/s) |
 | GET | `/api/camera` | Live annotated MJPEG stream (kept for other clients) |
 
@@ -168,7 +171,8 @@ These tests check the logic, not real-world perception accuracy. See the live ch
 - Live frames exist only in memory: the preview stream, a ring buffer of about 2.5 seconds used to pick photo frames, and the calibration reference.
 - SQLite stores item names, areas, approximate positions, times, confidence and photo metadata. Even this metadata can reveal routines.
 - You can pause photo saving or clear everything from the Privacy panel.
-- The backend listens on 127.0.0.1 only. Ultralytics telemetry is turned off, and there are no cloud APIs or analytics.
+- The backend listens on 127.0.0.1 only. Ultralytics telemetry is turned off, and there are no analytics.
+- With the Grok voice on, the sentence being spoken (e.g. "I last saw your keys on the desk") is sent to xAI to turn into audio. No images, video or microphone audio are sent. The API key stays in `.env` on the backend and is never sent to the browser.
 - Voice recognition runs in your browser. In Chrome, speech audio is processed by Google. Typed questions stay local.
 
 ## Troubleshooting
