@@ -55,6 +55,7 @@ async def lifespan(_: FastAPI):
         source = env("CAMERA_INDEX", "0")  # webcam index, or a video file path for testing
         worker = VisionWorker(memory, regions, snapshots, modes,
                               camera_index=int(source) if source.isdigit() else source,
+                              camera_name=env("CAMERA_NAME", "") or None,  # e.g. iPhone; wins over the index
                               model_path=env("MODEL", DEFAULT_MODEL),
                               # candidate cutoff; each item then needs its own min_conf (catalog.py)
                               conf=float(env("DETECT_CONFIDENCE", DEFAULT_CONF)),

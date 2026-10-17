@@ -16,6 +16,7 @@ import cv2
 import numpy as np
 
 from furniture import FURNITURE, propose_regions
+from cameras import find_camera, list_cameras
 from catalog import MIN_CONF
 from memory import ALIASES, Observation, SpatialMemory, display_name
 from modes import MONITORING, ModeController
@@ -79,13 +80,14 @@ class VisionWorker(threading.Thread):
                  conf: float = 0.4, fps: float = 5.0, frame_width: int = 1280,
                  camera_shift_motion: float = 0.5, scan_model_path: str | None = None,
                  device: str | None = None, preview_width: int = 640,
-                 presence: PresenceTracker | None = None):
+                 presence: PresenceTracker | None = None, camera_name: str | None = None):
         super().__init__(daemon=True, name="vision")
         self.memory = memory
         self.regions = regions  # shared list; updated in place by calibration
         self.snapshots = snapshots
         self.modes = modes
         self.camera_index = camera_index
+        self.camera_name = camera_name  # e.g. "iPhone": wins over camera_index (see cameras.py)
         self.model_path = model_path
         self.scan_model_path = scan_model_path  # larger model used only by Scan room
         self._scan_model = None
@@ -278,14 +280,24 @@ class VisionWorker(threading.Thread):
             model.predictor = None  # forces a fresh predictor + tracker on the next call
 
     def _open_camera(self):
-        cap = cv2.VideoCapture(self.camera_index)
+        index = self.camera_index
+        if self.camera_name:  # indexes shift as cameras come and go; never fall back to another one
+            found = find_camera(self.camera_name)
+            if found is None:
+                names = ", ".join(n for _, n in list_cameras()) or "none"
+                self.status.update(camera="error", error=(
+                    f"Camera \"{self.camera_name}\" isn't connected (cameras now: {names}). "
+                    "For an iPhone: lock it, keep it still near the Mac, and wait."))
+                return None
+            index = found
+        cap = cv2.VideoCapture(index)
         if not cap.isOpened():
             cap.release()
             self.status.update(camera="error", error=(
-                f"Can't open camera {self.camera_index}. Check the camera index and permission."))
+                f"Can't open camera {index}. Check the camera index and permission."))
             return None
         self.status.update(camera="active", error=None)
-        log.info("camera %s opened", self.camera_index)
+        log.info("camera %s opened%s", index, f" ({self.camera_name})" if self.camera_name else "")
         return cap
 
     @staticmethod
