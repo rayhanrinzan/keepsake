@@ -14,7 +14,7 @@ Keepsake (repo: ctrl-f-spatial-memory) is a local spatial-memory assistant for H
 - `backend/spatial.py`: `Region` (with furniture `kind`), `locate()` (most specific area → "Near X" → side of room), `place_phrase()`, `validate_regions`, `save_regions`. `regions.json` ships empty.
 - `backend/main.py`: FastAPI. `object_view()` builds the canonical object shape that every UI uses. Config comes from `CTRLF_*` env vars. Binds to 127.0.0.1.
 - `frontend/src`: React 19, Vite, Tailwind 4 (theme tokens in `index.css`), lucide. `App.tsx` polls health/objects/events every 1.5 s.
-  - Components: `ObjectList`, `ObjectDetail` (dialog with photo history), `SnapshotPhoto` (bbox overlay), `RoomMap`, `SearchPanel` (voice conversation state machine plus typed input), `CameraPanel`/`LiveFeed`, `ScanFlow` (with `AreaEditor`), `ActivityFeed`, `PrivacyPanel`.
+  - Components: `ObjectList`, `ObjectDetail` (dialog with photo history), `SnapshotPhoto` (bbox overlay), `RoomMap`, `SearchPanel` (voice conversation state machine plus typed input), `CameraPanel`/`LiveFeed` (polls `/api/camera/frame` ~5 fps instead of MJPEG, which stalled in browsers), `ScanFlow` (with `AreaEditor`), `ActivityFeed`, `PrivacyPanel`.
   - `lib/voice.ts`: `speak()` resolves when speech ends; `listenOnce()` is the hook for a future wake word.
 
 ## Run

@@ -120,7 +120,8 @@ All settings are optional environment variables, read at backend start. See [.en
 | POST | `/api/reposition/{start,cancel,finish,resume}` | Scan room: pause → scan → resume |
 | GET | `/api/calibration/reference` | Steady reference photo from the last scan (kept in memory) |
 | GET/PUT | `/api/regions` | Read or save room areas (`{name, kind, camera}`) |
-| GET | `/api/camera` | Live annotated MJPEG preview |
+| GET | `/api/camera/frame` | Newest annotated frame as one JPEG (the dashboard polls this about 5×/s) |
+| GET | `/api/camera` | Live annotated MJPEG stream (kept for other clients) |
 
 ## Tests
 
@@ -173,6 +174,7 @@ These tests check the logic, not real-world perception accuracy. See the live ch
 | "Keepsake is already running" | Another backend owns port 8000. Stop it with Ctrl+C in its window. A second copy must not share the camera and database |
 | No photo after moving an item | Let go and wait about 1 s. Photos are taken only once the item holds still and your hand is clear |
 | Item not detected | Check `/api/health` shows `inference_width` 1280 and a GPU `device`. Improve the lighting or move it closer, or lower `CTRLF_CONFIDENCE` to 0.3. Small items (mouse, remote) are harder |
+| Live view frozen but items still update | Reload the page. The view polls single frames and shows "Live view paused" if frames stop arriving |
 | Voice button says unsupported | Use Chrome, Edge or Safari, or type instead |
 
 ## Not built (stretch goals)
