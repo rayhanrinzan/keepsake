@@ -7,3 +7,4 @@ clip @ git+https://github.com/ultralytics/CLIP.git  # YOLO-World prompt encoder 
 lap>=0.5          # ByteTrack assignment solver used by Ultralytics tracking
 pytest>=8
 httpx>=0.27       # FastAPI TestClient
+# mediapipe>=0.10   # optional: hand evidence for pickup/put-down (issue #5); see hands.py

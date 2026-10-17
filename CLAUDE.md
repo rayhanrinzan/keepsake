@@ -8,6 +8,9 @@ Keepsake (repo: ctrl-f-spatial-memory) is a local spatial-memory assistant for H
 - `backend/memory.py`: `SpatialMemory.observe(obs, now, frame_id)` runs a per-category state machine (STABLE → POSSIBLE_CHANGE → MOVING → SETTLING → confirm). It returns confirmed events: `first_seen`, `moved`, `moved_within` or `reconfirmed`, with the best frame id and bbox. It also handles pause/resume (with a new view id), suspend (whole-camera shift) and lost-while-moving. `answer_query()` gives grounded, deterministic answers.
 - `backend/snapshots.py`: `SnapshotStore.submit(event, frame)` queues a JPEG write on a background thread, with cooldown dedupe, per-item retention, safe filename checks and `clear()`. The capture toggle is stored in the settings table.
 - `backend/vision.py`: `VisionWorker` thread. Capture → resize to 1280 (photos and inference, `imgsz=1280` on MPS/CUDA via `pick_device()`; 640 lost small items across a room; preview stream is 640) → `MotionDetector` (frame differencing, global and per bbox) → YOLO-World track (`set_classes(catalog + person)`; needs the `clip` package) → `memory.observe` → `snapshots.submit` with the frame from the ring buffer. It also produces the MJPEG preview, the black-frame and camera-shift warnings, and resets the tracker on reposition.
+- `backend/events.py` (stdlib only): wearable observation event contract shared with Photon/voice (`object_observed`, `interaction_candidate`, `possible_pickup`, `placement_confirmed`; `evidence[]` codes; `validate_event`).
+- `backend/wearable.py`: `WearableObserver` (issue #4: filtered sightings, no movement claims) and `InteractionDetector` (issue #5: hand–object evidence state machine). Pure Python; tested with synthetic sequences.
+- `backend/hands.py`: optional MediaPipe `HandDetector` (Tasks API with `models/hand_landmarker.task`, or legacy `solutions`). Missing means disabled, never an error.
 - `backend/furniture.py`: `propose_regions()` clusters per-frame furniture detections from a scan into named areas (Chair 1, Chair 2…).
 - `backend/modes.py`: `ModeController` (MONITORING → REPOSITIONING → CALIBRATING → READY_TO_RESUME). Once the view is steady, the worker's `_scan()` runs the scan model (yolo11m) on the last 5 frames and stores the reference JPEG and proposed areas.
 - `backend/database.py`: SQLite tables objects, events, snapshots (metadata only) and settings, with an in-place column migration.
@@ -27,7 +30,7 @@ cd backend && ../.venv/bin/python check_camera.py 1 # pick/permit a camera index
 
 ## Test
 ```bash
-.venv/bin/python -m pytest        # 45 tests, synthetic detections; pytest.ini sets pythonpath=backend
+.venv/bin/python -m pytest        # 65 tests, synthetic detections; pytest.ini sets pythonpath=backend
 npm --prefix frontend run build
 ```
 `tests/conftest.py` has `Clock` (feeds frames at 5 fps) and `obs()` helpers. The API tests point `CTRLF_*` at tmp paths, including a copy of `regions.json`.
@@ -41,7 +44,7 @@ npm --prefix frontend run build
 ## Limitations
 - One item per category. Only COCO classes (no keys, wallets or headphones).
 - Areas are 2D image rectangles. The Map is drawn in camera view, not top-down. Furniture detection is limited to COCO classes and has false positives, so the user reviews every scan.
-- "Touched but not moved" is not detected; there's no hand tracking.
+- Hand evidence (MediaPipe) is experimental and tuned on synthetic sequences only; `CTRLF_CAMERA_MODE=wearable` (default) turns off movement claims and the camera-shift pause.
 - Thresholds were tuned on synthetic tests. Real-camera tuning is still pending (see the README live checklist).
 - Polling, not push.
 

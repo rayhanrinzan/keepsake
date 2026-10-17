@@ -67,4 +67,6 @@ export const EVENT_LABEL: Record<string, string> = {
   moved: 'Moved here',
   moved_within: 'Shifted position',
   reconfirmed: 'Found again after camera moved',
+  object_observed: 'Seen',
+  placement_confirmed: 'Put down here',
 }

@@ -46,8 +46,10 @@ class SnapshotStore:
     def enabled(self, value: bool) -> None:
         self.db.set_setting("capture_enabled", "1" if value else "0")
 
-    def submit(self, event: dict, frame: np.ndarray | None) -> bool:
-        """Queue a snapshot for a confirmed event. Returns False if skipped."""
+    def submit(self, event: dict, frame: np.ndarray | None, on_saved=None) -> bool:
+        """Queue a snapshot for a confirmed event. Returns False if skipped.
+
+        `on_saved(snapshot_id)` runs on the writer thread once the photo is stored."""
         if frame is None or not self.enabled or not event.get("bbox"):
             return False
         x0, y0, x1, y1 = event["bbox"]
@@ -58,7 +60,7 @@ class SnapshotStore:
             return False  # duplicate of a photo we just took
         self._recent[event["object_id"]] = (now, cx, cy)
         try:
-            self._q.put_nowait((event, frame))
+            self._q.put_nowait((event, frame, on_saved))
         except queue.Full:
             log.warning("snapshot queue full; dropping %s", event["object_id"])
             return False
@@ -71,31 +73,34 @@ class SnapshotStore:
 
     def _writer(self) -> None:
         while True:
-            event, frame = self._q.get()
+            event, frame, on_saved = self._q.get()
             try:
-                self._write(event, frame)
+                snap_id = self._write(event, frame)
+                if snap_id is not None and on_saved:
+                    on_saved(snap_id)
             except Exception:  # noqa: BLE001
                 log.exception("snapshot write failed")
             finally:
                 self._q.task_done()
 
-    def _write(self, event: dict, frame: np.ndarray) -> None:
+    def _write(self, event: dict, frame: np.ndarray) -> int | None:
         h, w = frame.shape[:2]
         if w > self.max_width:
             frame = cv2.resize(frame, (self.max_width, int(h * self.max_width / w)))
         ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         if not ok:
-            return
+            return None
         name = f"{event['object_id']}-{uuid.uuid4().hex}.jpg"
         (self.dir / name).write_bytes(buf.tobytes())
         x0, y0, x1, y1 = event["bbox"]
-        self.db.add_snapshot({
+        snap_id = self.db.add_snapshot({
             "object_id": event["object_id"], "event_type": event["event_type"],
-            "timestamp": event.get("frame_time") or event["timestamp"], "region": event["region"],
+            "timestamp": event.get("frame_time") or event["timestamp"], "region": event.get("region"),
             "x0": round(x0, 4), "y0": round(y0, 4), "x1": round(x1, 4), "y1": round(y1, 4),
             "confidence": event["confidence"], "filename": name, "view_id": event.get("view_id")})
         for old in self.db.prune_snapshots(event["object_id"], self.retention):
             self._unlink(old)
+        return snap_id
 
     def path_for(self, filename: str) -> Path | None:
         if not FILENAME_RE.match(filename):

@@ -103,6 +103,10 @@ All settings are optional environment variables, read at backend start. See [.en
 | `CTRLF_DB_PATH` | `backend/data/ctrlf.db` | SQLite file (git-ignored) |
 | `CTRLF_REGIONS` | `backend/regions.json` | Room areas, written by Scan room (ships empty) |
 | `CTRLF_SCAN_MODEL` | `backend/models/yolo11m.pt` | Larger model used only for furniture detection during a scan |
+| `CTRLF_CAMERA_MODE` | `wearable` | `wearable` (chest-mounted phone): no movement claims from screen position, no camera-shift pause. `fixed`: the original room camera |
+| `CTRLF_HANDS` | `1` | `0` turns off MediaPipe hand detection (interaction events) |
+| `CTRLF_HAND_MODEL` | `backend/models/hand_landmarker.task` | MediaPipe hand model (see hands.py for the download command) |
+| `CTRLF_ITEMS_MODEL` | `backend/models/items.pt` | Optional detector trained on our demo items (keys, wallet, AirPods, glasses) |
 
 ## API
 
@@ -115,6 +119,8 @@ All settings are optional environment variables, read at backend start. See [.en
 | GET | `/api/objects/{id}/snapshots` | Photo history |
 | GET | `/api/snapshots/{id}/image` | The photo (by id only, never by path) |
 | GET | `/api/events` | Movement history |
+| GET | `/api/observations` | Wearable observation events, newest first (`limit`, `after_seq`, `event_type`, `object_id`) |
+| GET | `/api/observations/contract` | The event schema (fields, event types, evidence codes, version) |
 | POST | `/api/query` | `{"text": "my water bottle"}` → `{found, answer, object}` |
 | GET/PUT | `/api/settings` | `{"capture_enabled": bool}` |
 | DELETE | `/api/memory` | Forget everything and delete all photos |
@@ -131,7 +137,7 @@ All settings are optional environment variables, read at backend start. See [.en
 npm --prefix frontend run build
 ```
 
-There are 45 backend tests, all using **synthetic** detections and frames. They cover:
+There are 65 backend tests, all using **synthetic** detections and frames. They cover:
 
 - the catalog and its aliases
 - first sightings, moves between areas and moves within an area
@@ -141,6 +147,9 @@ There are 45 backend tests, all using **synthetic** detections and frames. They 
 - the capture toggle, query answers, and list/detail consistency
 - furniture proposals from scan detections, and adaptive area/"near"/side-of-room wording
 - the full Scan room flow, including preserving history and no false moves
+- wearable observation events: flicker, ID swaps, occlusion, camera motion, duplicate frames, cooldown, no movement claims
+- hand evidence: hand passing by, hand covering an item, camera pan, pickup then put-down, item leaving with the hand
+- the observation event contract, its storage, and `/api/observations`
 
 These tests check the logic, not real-world perception accuracy. See the live checklist below.
 
@@ -152,6 +161,40 @@ These tests check the logic, not real-world perception accuracy. See the live ch
 4. **Disappearance:** take the bottle away. It keeps its last photo and shows "Out of view".
 5. **Voice:** press Voice and say "my water bottle". You hear the answer and the photo opens.
 6. **Scan room:** press Scan room, move the camera if you like, then Scan. Check the proposed areas match your furniture, fix them, and Save and resume. There should be no new movement events, and old photos remain.
+
+## Wearable observation events (issues #4, #5)
+
+With the phone worn on the chest, screen position says nothing about whether an item moved. So the
+worker also emits **observation events** for Photon reminders and voice, stored in SQLite and served by
+`GET /api/observations`. The contract lives in `backend/events.py`, which uses only the standard library,
+so consumers never need the vision stack. Each event has `event_id, event_type, object_id, category, name,
+timestamp, confidence, bbox, snapshot_id, frame_id, camera_mode, view_id, evidence[]` plus a `seq` cursor.
+
+| event_type | Emitted when | What it does **not** claim |
+|---|---|---|
+| `object_observed` | Item seen in ≥3 of the last 5 camera-steady frames, at a consistent position (one per item per 30 s, with a photo) | that it moved or was placed |
+| `interaction_candidate` | A MediaPipe hand stays on the item's box for 2+ frames | that it was picked up |
+| `possible_pickup` | Next, the item moves with the hand, or vanishes and stays gone after the hand leaves (not if it reappears in place, which is occlusion) | that the user still has it |
+| `placement_confirmed` | Only after a `possible_pickup`: the item reappears, with no hand on it, still for 5 frames, camera steady (with a photo) | — |
+
+Filters: tracker ID swaps (events are keyed by item, not track id), flicker and jumping false hits,
+brief occlusion (2 s grace), camera motion (measured outside the hand/object boxes; any pan resets
+partial evidence), duplicate or out-of-order frames, and a per-item cooldown. Hand detection is optional:
+`pip install mediapipe`, download the model (command in `backend/hands.py`), and `/api/health` reports
+`hands: on`. Without it, only `object_observed` is emitted.
+
+In `wearable` mode the memory never reports `moved`/`moved_within`. A re-sighting somewhere else is
+`reconfirmed`, so the item's last-seen place updates without inventing a movement event.
+
+### Wearable validation checklist (chest-mounted iPhone)
+
+1. `/api/health` shows `camera_mode: wearable` and `hands: on` (or the reason in `hands_reason`).
+2. **Seen:** look down at the keys on a table for about 1 s. You get one `object_observed` with a photo, and no `moved` event appears under Recent activity.
+3. **Walk around:** turn and walk past the keys. You should get no duplicate events within 30 s and no `possible_pickup`.
+4. **Hand passes:** wave your hand over the keys without touching them. You get nothing, or at most `interaction_candidate`.
+5. **Pick up and put down:** pick the keys up, carry them, and set them down elsewhere while looking at them, then let go and hold still for about 1 s. You should see `interaction_candidate`, then `possible_pickup`, then `placement_confirmed` with a photo of the new spot.
+6. **Occlusion:** cover the keys with your hand and lift it away. There should be no `possible_pickup`.
+7. Note each failure (missed hand, false pickup, item not detected) and its lighting and distance. Thresholds are in `wearable.py`.
 
 ## Privacy
 

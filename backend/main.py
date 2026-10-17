@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+import events as observation_events
 from catalog import CATALOG
 from database import Database
 from memory import SpatialMemory, answer_query, parse_query
@@ -27,13 +28,15 @@ def env(name: str, default: str) -> str:
     return os.getenv(f"CTRLF_{name}", default)
 
 
+CAMERA_MODE = env("CAMERA_MODE", "wearable")  # "wearable" (chest-mounted iPhone) or "fixed"
 regions = load_regions()
 db = Database(env("DB_PATH", str(HERE / "data" / "ctrlf.db")))
 memory = SpatialMemory(db, regions, stability=int(env("STABILITY_FRAMES", "4")),
                        min_confidence=float(env("CONFIDENCE", "0.35")),  # fallback; per-item min_conf in catalog.py
                        absence_seconds=float(env("ABSENCE_SECONDS", "2.0")),
                        move_threshold=float(env("MOVE_THRESHOLD", "0.06")),
-                       settle_seconds=float(env("SETTLE_SECONDS", "0.8")))
+                       settle_seconds=float(env("SETTLE_SECONDS", "0.8")),
+                       camera_mode=CAMERA_MODE)
 snapshots = SnapshotStore(db, env("SNAPSHOT_DIR", str(HERE / "data" / "snapshots")),
                           retention=int(env("SNAPSHOT_RETENTION", "20")),
                           cooldown_seconds=float(env("SNAPSHOT_COOLDOWN", "3")))
@@ -55,7 +58,8 @@ async def lifespan(_: FastAPI):
                               fps=float(env("INFERENCE_FPS", "5")),
                               scan_model_path=env("SCAN_MODEL", str(HERE / "models" / ("yolo11m.pt" if (HERE / "models" / "yolo11m.pt").exists() else "yolo11n.pt"))),
                               frame_width=int(env("INFERENCE_WIDTH", "1280")),
-                              device=env("DEVICE", "") or None)
+                              device=env("DEVICE", "") or None,
+                              camera_mode=CAMERA_MODE, hands_enabled=env("HANDS", "1") == "1")
         worker.start()
     yield
     if worker:
@@ -120,7 +124,8 @@ def find_item(object_id: str) -> dict | None:
 @app.get("/api/health")
 def health():
     status = dict(worker.status) if worker else {"camera": "disabled", "error": None,
-                                                 "warning": None, "fps": 0, "detections": []}
+                                                 "warning": None, "fps": 0, "detections": [],
+                                                 "camera_mode": CAMERA_MODE}
     return {"status": "ok", **status, **modes.status(), "capture_enabled": snapshots.enabled}
 
 
@@ -171,6 +176,26 @@ def get_events(limit: int = 50):
     return [{**e, "name": names.get(e["object_id"], e["name"])} for e in db.get_events(limit)]
 
 
+@app.get("/api/observations")
+def get_observations(limit: int = 50, after_seq: int = 0, event_type: str | None = None,
+                     object_id: str | None = None):
+    """Wearable observation events (contract: GET /api/observations/contract), newest first.
+    Poll with after_seq = the largest `seq` you've seen to get only new events."""
+    if event_type and event_type not in observation_events.EVENT_TYPES:
+        raise HTTPException(422, f"event_type must be one of {list(observation_events.EVENT_TYPES)}")
+    if object_id:
+        item = find_item(object_id)
+        if item is None:
+            raise HTTPException(404, "Keepsake doesn't track that item")
+        object_id = item["object_id"]
+    return db.get_observations(min(max(limit, 1), 500), after_seq, event_type, object_id)
+
+
+@app.get("/api/observations/contract")
+def get_observation_contract():
+    return observation_events.contract()
+
+
 class Query(BaseModel):
     text: str
 
@@ -203,9 +228,12 @@ def put_settings(s: Settings):
 
 @app.delete("/api/memory")
 def clear_memory():
-    """Forget every object location, movement event and stored photo."""
+    """Forget every object location, movement/observation event and stored photo."""
     memory.reset()
     snapshots.clear()
+    if worker:
+        worker.observer.reset()
+        worker.interactions.reset()
     return {"cleared": True}
 
 

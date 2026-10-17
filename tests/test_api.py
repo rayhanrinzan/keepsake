@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import BED, DESK, TEST_AREAS, Clock, obs
+from catalog import CATALOG
 from spatial import save_regions
 
 
@@ -35,17 +36,17 @@ def inject(main, *observations, n=6, clock=None):
 def test_catalog_and_never_seen_objects(api):
     c, _ = api
     objs = c.get("/api/objects").json()
-    assert [o["name"] for o in objs][:2] == ["Phone", "Water Bottle"] and len(objs) == 12
+    assert [o["name"] for o in objs][:2] == ["Water Bottle", "Keys"] and len(objs) == len(CATALOG)
     assert all(o["status"] == "never" and o["region"] is None and o["snapshot"] is None for o in objs)
-    assert len(c.get("/api/catalog").json()) == 12
+    assert len(c.get("/api/catalog").json()) == len(CATALOG)
     assert c.get("/api/health").json()["camera"] == "disabled"
 
 
 def test_object_snapshot_and_query_flow(api):
     c, main = api
     clock = inject(main, obs("bottle", DESK))
-    phone = c.get("/api/objects/phone").json()
-    assert phone["status"] == "never"
+    wallet = c.get("/api/objects/wallet").json()
+    assert wallet["status"] == "never"
     bottle = c.get("/api/objects/bottle_01").json()
     assert bottle["status"] == "visible" and bottle["region"] == "Desk"
     snap = bottle["snapshot"]
@@ -66,18 +67,18 @@ def test_object_snapshot_and_query_flow(api):
 
 def test_list_and_map_share_one_object_state(api):
     c, main = api
-    inject(main, obs("cup", BED))
+    inject(main, obs("backpack", BED))
     listing = {o["object_id"]: o for o in c.get("/api/objects").json()}
-    detail = c.get("/api/objects/cup_01").json()
-    assert listing["cup_01"] == detail  # both views render this exact record
+    detail = c.get("/api/objects/backpack_01").json()
+    assert listing["backpack_01"] == detail  # both views render this exact record
 
 
 def test_settings_toggle_capture(api):
     c, main = api
     assert c.put("/api/settings", json={"capture_enabled": False}).json() == {"capture_enabled": False}
-    inject(main, obs("book", DESK))
-    book = c.get("/api/objects/book_01").json()
-    assert book["region"] == "Desk" and book["snapshot"] is None
+    inject(main, obs("backpack", DESK))
+    bag = c.get("/api/objects/backpack_01").json()
+    assert bag["region"] == "Desk" and bag["snapshot"] is None
     assert c.get("/api/health").json()["capture_enabled"] is False
 
 

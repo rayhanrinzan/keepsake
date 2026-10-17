@@ -87,7 +87,8 @@ class SpatialMemory:
     def __init__(self, db: Database, regions: list[Region], stability: int = 4,
                  min_confidence: float = 0.4, absence_seconds: float = 2.0,
                  move_threshold: float = 0.06, jitter: float = 0.025,
-                 settle_seconds: float = 0.8, motion_threshold: float = 0.08):
+                 settle_seconds: float = 0.8, motion_threshold: float = 0.08,
+                 camera_mode: str = "fixed"):
         self.db = db
         self.regions = regions
         self.stability = stability
@@ -97,6 +98,10 @@ class SpatialMemory:
         self.jitter = jitter
         self.settle = timedelta(seconds=settle_seconds)
         self.motion_threshold = motion_threshold
+        # "wearable": the camera moves with the user, so a changed screen position is a new view,
+        # not evidence the item moved. Confirmations become `reconfirmed` (no movement event).
+        self.camera_mode = camera_mode
+        self.loose_categories: set[str] = set()  # categories whose boxes jitter more (custom model)
         self.paused = False
         self._suspended_until: datetime | None = None
         self._tracks: dict[str, _Track] = {}
@@ -162,7 +167,8 @@ class SpatialMemory:
 
         s = _Sample(now, o.x, o.y, region, o.confidence, o.bbox, frame_id, occluded, o.motion)
         last = tr.samples[-1] if tr.samples else None
-        if last and (math.hypot(s.x - last.x, s.y - last.y) > self.jitter or s.region != last.region):
+        jitter = self.jitter * 3 if category in self.loose_categories else self.jitter
+        if last and (math.hypot(s.x - last.x, s.y - last.y) > jitter or s.region != last.region):
             tr.state, tr.samples = MOVING, [s]  # still on the move: restart the settle window
         else:
             tr.samples.append(s)
@@ -194,6 +200,8 @@ class SpatialMemory:
             event_type = "moved"
         else:
             event_type = "moved_within"
+        if self.camera_mode == "wearable" and event_type in ("moved", "moved_within"):
+            event_type = "reconfirmed"  # see issue #4: no movement claims from a moving camera
         from_region = rec["region"] if rec else None
         rec = rec or {"object_id": object_id_for(category), "category": category,
                       "name": display_name(category), "visible": True,

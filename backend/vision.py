@@ -6,6 +6,8 @@ from SpatialMemory are handed to SnapshotStore, which writes selected photos on 
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 import threading
 import time
 from collections import deque
@@ -18,7 +20,14 @@ from catalog import MIN_CONF
 from memory import ALIASES, Observation, SpatialMemory, display_name
 from modes import MONITORING, ModeController
 from snapshots import SnapshotStore
-from spatial import Region
+from spatial import Region, locate
+from wearable import InteractionDetector, WearableObserver
+import events as E
+
+PHOTO_EVENTS = {E.OBJECT_OBSERVED, E.PLACEMENT_CONFIRMED}  # observation events that keep a photo
+
+# Classes in items.pt with no real training photos yet: leave these to YOLO-World.
+NOT_TRAINED = {"glasses"}
 
 log = logging.getLogger("keepsake.vision")
 
@@ -69,13 +78,27 @@ class MotionDetector:
         roi = self.mask[r0:r1, c0:c1]
         return float(roi.mean()) if roi.size else 0.0
 
+    def background(self, exclude: list[tuple[float, float, float, float]], pad: float = 0.1) -> float:
+        """Changed-pixel fraction outside the given boxes (hands, objects): camera motion, not
+        the motion of a hand moving an object."""
+        if self.mask is None:
+            return 0.0
+        h, w = self.mask.shape
+        keep = np.ones_like(self.mask, dtype=bool)
+        for x0, y0, x1, y1 in exclude:
+            px, py = (x1 - x0) * pad, (y1 - y0) * pad
+            keep[int(max(0, y0 - py) * h):int(min(1, y1 + py) * h) + 1,
+                 int(max(0, x0 - px) * w):int(min(1, x1 + px) * w) + 1] = False
+        return float(self.mask[keep].mean()) if keep.any() else 0.0
+
 
 class VisionWorker(threading.Thread):
     def __init__(self, memory: SpatialMemory, regions: list[Region], snapshots: SnapshotStore,
                  modes: ModeController, camera_index: int | str = 0, model_path: str = "yolo11n.pt",
                  conf: float = 0.4, fps: float = 5.0, frame_width: int = 1280,
                  camera_shift_motion: float = 0.5, scan_model_path: str | None = None,
-                 device: str | None = None, preview_width: int = 640):
+                 device: str | None = None, preview_width: int = 640,
+                 camera_mode: str = "wearable", hands_enabled: bool = True):
         super().__init__(daemon=True, name="vision")
         self.memory = memory
         self.regions = regions  # shared list; updated in place by calibration
@@ -92,6 +115,11 @@ class VisionWorker(threading.Thread):
         self.device = device or pick_device()
         self.camera_shift_motion = camera_shift_motion
         self.motion = MotionDetector()
+        self.camera_mode = camera_mode  # "wearable" (body-worn, always moving) or "fixed"
+        self.observer = WearableObserver(camera_mode)            # issue #4: object_observed
+        self.interactions = InteractionDetector(camera_mode)     # issue #5: hand evidence
+        self.hands_enabled = hands_enabled
+        self.hands = None  # hands.HandDetector, created on the worker thread
         self._ring: deque[tuple[int, np.ndarray]] = deque(maxlen=12)  # (frame_id, snapshot-size frame)
         self._frame_id = 0
         self._shift_frames = 0
@@ -101,7 +129,9 @@ class VisionWorker(threading.Thread):
         self._jpeg_lock = threading.Lock()
         self.status = {"camera": "starting", "error": None, "warning": None, "fps": 0.0,
                        "device": self.device, "inference_width": frame_width,
-                       "motion": 0.0, "detections": [], "model": model_path}
+                       "motion": 0.0, "detections": [], "model": model_path,
+                       "camera_mode": camera_mode, "camera_motion": 0.0,
+                       "hands": "off", "hands_reason": None, "interactions": {}}
 
     # ---- public ----
     def latest_jpeg(self) -> bytes | None:
@@ -122,10 +152,19 @@ class VisionWorker(threading.Thread):
             from ultralytics import YOLO, settings
             settings.update({"sync": False})  # no Ultralytics telemetry
             model = YOLO(self.model_path)
+            # Optional model trained on our own items (last-seen/train.py -> models/items.pt).
+            # It handles the items it knows; YOLO-World keeps looking for everything else.
+            self._items_model = None
+            items_path = Path(os.getenv("CTRLF_ITEMS_MODEL", str(Path(__file__).parent / "models" / "items.pt")))
+            if items_path.exists():
+                self._items_model = YOLO(str(items_path))
+                log.info("custom items model %s: %s", items_path.name, list(self._items_model.names.values()))
+            custom = (set(self._items_model.names.values()) - NOT_TRAINED) if self._items_model else set()
+            self.memory.loose_categories = custom  # trained-model boxes wobble more than tracked ones
             if "world" in str(self.model_path).lower():  # open vocabulary: tell it what to look for
                 from catalog import SUPPORTED
                 try:
-                    model.set_classes(SUPPORTED + [PERSON])
+                    model.set_classes([c for c in SUPPORTED if c not in custom] + [PERSON])
                 except ImportError as e:  # YOLO-World encodes the prompts with CLIP
                     raise RuntimeError(
                         "YOLO-World needs CLIP: run .venv/bin/pip install -r backend/requirements.txt") from e
@@ -134,10 +173,17 @@ class VisionWorker(threading.Thread):
             self.status.update(camera="error", error=f"Model load failed: {e}")
             return
         class_ids = [i for i, n in model.names.items() if n in ALIASES or n == PERSON]
-        missing = [c for c in ALIASES if c not in model.names.values()]
+        missing = [c for c in ALIASES if c not in model.names.values() and c not in custom]
         if missing:  # e.g. a COCO-only model can't see keys or wallets
             log.warning("detector %s can't detect: %s", self.model_path, ", ".join(missing))
         self.status["undetectable"] = missing
+        if self.hands_enabled:
+            from hands import HandDetector
+            self.hands = HandDetector()
+            self.status.update(hands="on" if self.hands.available else "unavailable",
+                               hands_reason=self.hands.reason or None)
+        else:
+            self.status["hands_reason"] = "disabled (CTRLF_HANDS=0)"
 
         cap = None
         failures = 0
@@ -194,24 +240,31 @@ class VisionWorker(threading.Thread):
         self.modes.on_frame(global_motion, lambda: self._scan(model, full))
 
         # Whole-view change outside Reposition mode: hold location updates instead of logging moves.
+        # A worn camera moves all the time; there the memory never reports moves (see memory.py).
         monitoring = self.modes.mode == MONITORING
+        fixed = self.camera_mode == "fixed"
         self._shift_frames = self._shift_frames + 1 if global_motion > self.camera_shift_motion else 0
-        if monitoring and self._shift_frames >= 3:
+        if fixed and monitoring and self._shift_frames >= 3:
             self.memory.suspend(3.0)
             self.status["camera_shift_at"] = time.time()
-        if monitoring and time.time() - self.status.get("camera_shift_at", 0) < 10:
+        if fixed and monitoring and time.time() - self.status.get("camera_shift_at", 0) < 10:
             warning = warning or ("The camera view changed a lot. If you moved the camera, "
                                   "press Scan room to update its areas.")
         self.status["warning"] = warning
 
+        hands = []
         try:
-            obs = self._detect(model, frame, class_ids)
+            obs = self._detect(model, frame, class_ids) + self._detect_items(frame)
             for o in obs:
                 o.motion = self.motion.local(o.bbox)
             events = self.memory.observe(obs, frame_id=self._frame_id)
             for ev in events:
-                self.snapshots.submit(ev, self._frame_for(ev.get("frame_id")))
+                if fixed:  # worn camera: photos come from the observation events below
+                    self.snapshots.submit(ev, self._frame_for(ev.get("frame_id")))
                 log.info("%s %s -> %s", ev["event_type"], ev["name"], ev["region"])
+            if monitoring:
+                hands = self.hands.detect(frame) if self.hands else []
+                self._observe_wearable(obs, hands)
         except Exception as e:  # noqa: BLE001
             log.exception("inference failed")
             if self.device != "cpu":  # e.g. an MPS op that isn't supported: fall back for good
@@ -221,7 +274,34 @@ class VisionWorker(threading.Thread):
             self.status["error"] = f"Detection error: {e}"
             obs = []
         shown = [o for o in obs if o.category in MIN_CONF and o.confidence >= MIN_CONF[o.category]]
-        self._publish(self._resize(frame, self.preview_width), shown)  # only what memory would accept
+        self._publish(self._resize(frame, self.preview_width), shown, hands)  # only what memory would accept
+
+    def _observe_wearable(self, obs: list[Observation], hands) -> None:
+        """Issue #4/#5 events: filtered sightings plus hand-object evidence, stored for Photon/voice."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        cam = self.motion.background([o.bbox for o in obs if o.bbox] + [h.bbox for h in hands])
+        self.status["camera_motion"] = round(cam, 3)
+        view = self.memory.view_id
+        out = self.observer.update(obs, now, self._frame_id, cam, view)
+        if self.hands is not None and self.hands.available:
+            out += self.interactions.update(obs, hands, now, self._frame_id, cam, view)
+            self.status["interactions"] = {c: s for c, s in self.interactions.states().items() if s != "IDLE"}
+        for ev in out:
+            self._record(ev)
+
+    def _record(self, ev: dict) -> None:
+        db = self.memory.db
+        db.add_observation(ev)
+        log.info("%s %s (%.2f) %s", ev["event_type"], ev["name"], ev["confidence"], ",".join(ev["evidence"]))
+        if ev["event_type"] in PHOTO_EVENTS:
+            photo = {"object_id": ev["object_id"], "event_type": ev["event_type"],
+                     "timestamp": ev["timestamp"], "bbox": ev["bbox"],
+                     "region": locate((ev["bbox"][0] + ev["bbox"][2]) / 2, (ev["bbox"][1] + ev["bbox"][3]) / 2,
+                                      self.regions),
+                     "confidence": ev["confidence"], "view_id": ev["view_id"]}
+            self.snapshots.submit(photo, self._frame_for(ev["frame_id"]),
+                                  on_saved=lambda sid, eid=ev["event_id"]: db.set_observation_snapshot(eid, sid))
 
     def _scan(self, model, reference: np.ndarray) -> tuple[bytes | None, list[dict]]:
         """Scan room: detect furniture over the last few (steady) frames and propose areas."""
@@ -301,7 +381,24 @@ class VisionWorker(threading.Thread):
                                    bbox=(x0, y0, x1, y1)))
         return obs
 
-    def _publish(self, frame: np.ndarray, obs: list[Observation]) -> None:
+    def _detect_items(self, frame: np.ndarray) -> list[Observation]:
+        """Detections from our own trained model (keys, wallet, AirPods, glasses)."""
+        m = getattr(self, "_items_model", None)
+        if m is None:
+            return []
+        res = m.predict(frame, conf=0.25, imgsz=640, device=self.device, verbose=False)[0]
+        h, w = frame.shape[:2]
+        best: dict[str, Observation] = {}  # one physical object per item: keep the strongest box
+        for xyxy, cls, cf in zip(res.boxes.xyxy.tolist(), res.boxes.cls.int().tolist(), res.boxes.conf.tolist()):
+            name = m.names[cls]
+            if name not in ALIASES or name in NOT_TRAINED or (name in best and best[name].confidence >= cf):
+                continue
+            x0, y0, x1, y1 = xyxy[0] / w, xyxy[1] / h, xyxy[2] / w, xyxy[3] / h
+            best[name] = Observation(category=name, confidence=float(cf), x=(x0 + x1) / 2,
+                                     y=(y0 + y1) / 2, track_id=None, bbox=(x0, y0, x1, y1))
+        return list(best.values())
+
+    def _publish(self, frame: np.ndarray, obs: list[Observation], hands=()) -> None:
         h, w = frame.shape[:2]
         out = frame.copy()
         for r in list(self.regions):  # region overlays
@@ -316,6 +413,9 @@ class VisionWorker(threading.Thread):
             label = f"{display_name(o.category)} {o.confidence:.0%}"
             cv2.putText(out, label, (p0[0], max(14, p0[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX,
                         0.5, (90, 200, 120), 1, cv2.LINE_AA)
+        for hd in hands:  # MediaPipe hands, for checking interaction evidence live
+            x0, y0, x1, y1 = hd.bbox
+            cv2.rectangle(out, (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h)), (230, 160, 60), 1)
         if self.modes.mode != MONITORING:
             cv2.rectangle(out, (0, 0), (w, 28), (40, 40, 40), -1)
             cv2.putText(out, "Monitoring paused", (10, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
