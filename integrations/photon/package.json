@@ -6,7 +6,9 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --import tsx --test test/*.test.ts",
+    "trigger:departure": "tsx src/trigger.ts"
   },
   "dependencies": {
     "spectrum-ts": "^12.11.0"
