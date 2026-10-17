@@ -115,6 +115,9 @@ class VisionWorker(threading.Thread):
             from ultralytics import YOLO, settings
             settings.update({"sync": False})  # no Ultralytics telemetry
             model = YOLO(self.model_path)
+            if "world" in str(self.model_path).lower():  # open vocabulary: tell it what to look for
+                from catalog import SUPPORTED
+                model.set_classes(SUPPORTED + [PERSON])
         except Exception as e:  # noqa: BLE001
             log.exception("model load failed")
             self.status.update(camera="error", error=f"Model load failed: {e}")

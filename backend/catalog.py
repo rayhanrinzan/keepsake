@@ -1,27 +1,21 @@
 """The objects Keepsake remembers. One physical object per category (hackathon assumption).
 
-`category` must be a class name the detector actually outputs (pretrained YOLO11n / COCO).
+`category` is the text prompt given to the open-vocabulary detector (YOLO-World), so it can be any\nshort description of the object.
 Edit this list to change what Keepsake tracks; the API and frontend read it from /api/catalog.
 """
 from __future__ import annotations
 
 CATALOG: list[dict] = [
-    {"category": "cell phone", "name": "Phone", "icon": "phone",
-     "aliases": ["phone", "cell phone", "cellphone", "mobile", "iphone", "smartphone"]},
-    {"category": "bottle", "name": "Water Bottle", "icon": "bottle",
+    {"category": "water bottle", "name": "Water Bottle", "icon": "bottle",
      "aliases": ["water bottle", "bottle", "drink", "flask"]},
-    {"category": "laptop", "name": "Laptop", "icon": "laptop",
-     "aliases": ["laptop", "macbook", "computer", "notebook computer"]},
-    {"category": "cup", "name": "Cup", "icon": "cup",
-     "aliases": ["cup", "mug", "coffee", "coffee cup"]},
-    {"category": "book", "name": "Book", "icon": "book",
-     "aliases": ["book", "notebook", "novel"]},
-    {"category": "backpack", "name": "Backpack", "icon": "backpack",
-     "aliases": ["backpack", "bag", "rucksack", "bookbag", "school bag"]},
-    {"category": "remote", "name": "Remote", "icon": "remote",
-     "aliases": ["remote", "tv remote", "remote control", "controller", "clicker"]},
-    {"category": "mouse", "name": "Mouse", "icon": "mouse",
-     "aliases": ["mouse", "computer mouse"]},
+    {"category": "keys", "name": "Keys", "icon": "keys",
+     "aliases": ["keys", "key", "car keys", "house keys", "keychain"]},
+    {"category": "earbuds", "name": "AirPods", "icon": "airpods",
+     "aliases": ["airpods", "air pods", "earbuds", "earphones", "headphones", "airpods case"]},
+    {"category": "wallet", "name": "Wallet", "icon": "wallet",
+     "aliases": ["wallet", "purse", "card holder"]},
+    {"category": "glasses", "name": "Glasses", "icon": "glasses",
+     "aliases": ["glasses", "eyeglasses", "spectacles", "glasses case", "sunglasses"]},
 ]
 
 for _item in CATALOG:
