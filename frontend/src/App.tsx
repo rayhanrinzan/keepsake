@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ScanLine } from 'lucide-react'
 import { api } from './lib/api'
+import { speechOutputSupported, unlockSpeech } from './lib/voice'
 import type { Health, MoveEvent, QueryResult, Region, TrackedObject } from './lib/api'
 import { ObjectList } from './components/ObjectList'
 import { ObjectDetail } from './components/ObjectDetail'
@@ -52,6 +53,18 @@ export default function App() {
   const [now, setNow] = useState(Date.now())
   const [prompt, setPrompt] = useState<{ id: number; text: string } | null>(null)
   const leftCount = useRef<number | null>(null) // departures already handled
+  const [voiceReady, setVoiceReady] = useState(!speechOutputSupported)
+
+  useEffect(() => {
+    // The first click or key press anywhere lets the app speak on its own afterwards.
+    const unlock = () => setVoiceReady(unlockSpeech())
+    window.addEventListener('pointerdown', unlock, { once: true })
+    window.addEventListener('keydown', unlock, { once: true })
+    return () => {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('keydown', unlock)
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -137,6 +150,15 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {!voiceReady && (
+        <button
+          onClick={() => setVoiceReady(unlockSpeech())}
+          className="mb-4 w-full rounded-xl bg-sunken px-4 py-3 text-left text-[14px] text-muted hover:text-ink"
+        >
+          Click anywhere to turn on voice prompts, like “Are you looking for something?” when you leave the room.
+        </button>
+      )}
 
       {offline && (
         <p className="mb-4 rounded-xl bg-caution-soft px-4 py-3 text-caution">

@@ -82,6 +82,19 @@ export function speak(text: string): Promise<void> {
   })
 }
 
+let unlocked = false
+
+/** Browsers (Safari especially) mute speech a page starts on its own until it has spoken once
+ *  from a click or key press. Call this from such an event; later prompts are then audible. */
+export function unlockSpeech(): boolean {
+  if (unlocked || !speechOutputSupported) return unlocked
+  const u = new SpeechSynthesisUtterance(' ')
+  u.volume = 0
+  window.speechSynthesis.speak(u)
+  unlocked = true
+  return true
+}
+
 export function stopVoice() {
   try {
     active?.abort()
