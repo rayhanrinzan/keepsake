@@ -163,6 +163,8 @@ class ReminderEngine:
         self._observation_cursor = self._max_observation_seq()
         self._departure_cursor = departures.latest_id() if departures else 0
         self._departure_at = float("-inf")
+        self._last_obs: dict[str, float] = {}       # newest vision sighting per item (wearable)
+        self._last_detected: dict[str, float] = {}  # last tick the item was in the live detections
         self.log: deque[dict] = deque(maxlen=200)         # diagnostics, no message text
         self._lock = threading.RLock()
         self._halt = threading.Event()
@@ -341,6 +343,8 @@ class ReminderEngine:
                 o.state = POSSIBLE_INTERACTION
             return {"result": "recorded", "state": o.state}
 
+        if etype in OBSERVATION or etype in PLACEMENT:
+            self._last_obs[o.object_id] = max(self._last_obs.get(o.object_id, 0.0), ev["t"])
         # Observations and placements. A snapshot id only counts if that photo really exists.
         snap = ev["snapshot_id"]
         if snap is not None:
@@ -456,6 +460,10 @@ class ReminderEngine:
                 if ev:
                     self._apply(ev, now)
             status = self.status_fn() or {}
+            for d in status.get("detections") or []:
+                oid = self.by_category.get(d.get("category"))
+                if oid:
+                    self._last_detected[oid] = now
             hold = hold_reason(self.modes, self.memory, status, now=now) if self.modes else None
             self._read_departures(status, hold)
             self._expire_alerts(now)
@@ -474,7 +482,21 @@ class ReminderEngine:
                 self._departure_at = _ts(ev["at"]) or self.clock()
 
     def _object(self, object_id: str) -> dict | None:
-        return self.db.get_by_category(self.items[object_id]["category"])
+        """The item's memory. On a wearable, vision sightings and live detections count too:
+        they arrive before memory has confirmed a new item (seen live: keys had no memory row)."""
+        rec = self.db.get_by_category(self.items[object_id]["category"])
+        if self.camera_mode == "fixed":
+            return rec
+        now = self.clock()
+        seen = [t for t in (self._last_obs.get(object_id), self._last_detected.get(object_id)) if t]
+        if not seen:
+            return rec
+        latest = max([*seen, _ts(rec["last_seen"]) if rec else 0.0])
+        live = now - self._last_detected.get(object_id, float("-inf")) < 2.0
+        merged = dict(rec) if rec else {"object_id": object_id, "region": None, "view_id": None,
+                                         "lost_while_moving": False}
+        merged.update(last_seen=_iso(latest), visible=bool((rec or {}).get("visible")) or live)
+        return merged
 
     def _photo(self, o: _Obj, rec: dict | None = None) -> dict | None:
         """The newest real photo of the item (the reminder's grounding)."""

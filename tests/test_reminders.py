@@ -693,3 +693,23 @@ def test_fixed_camera_uses_memory_moves_and_vision_events_once(db):
     w.photo("wallet_01", "first_seen")  # memory's first_seen photo rows aren't events
     w.run(1)
     assert sum(e["what"] == "pending" for e in w.engine.log) == 1
+
+
+def test_wearable_sighting_before_memory_confirms_still_reminds(db):
+    """Seen live: vision reported the keys before memory had a row for them."""
+    w = World(db)
+    w.observe(E.OBJECT_OBSERVED, "car key", conf=0.82)  # vision event + photo, no memory row
+    w.run(1)
+    assert w.state("car key").state == PENDING_REMINDER
+    w.run(20)
+    assert len(w.alerts) == 1 and w.alerts[0]["items"][0]["object_id"] == "car_key_01"
+
+
+def test_wearable_live_detection_keeps_it_in_view(db):
+    w = World(db, status={"camera": "active", "detections": [{"category": "car key"}]})
+    w.observe(E.OBJECT_OBSERVED, "car key", conf=0.82)
+    w.run(30)  # still detected every tick: not separated
+    assert w.alerts == []
+    w.status["detections"] = []
+    w.run(20)
+    assert len(w.alerts) == 1
