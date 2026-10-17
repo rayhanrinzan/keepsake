@@ -16,16 +16,17 @@ import cv2
 import numpy as np
 
 from furniture import FURNITURE, propose_regions
+from cameras import find_camera, list_cameras
 from catalog import MIN_CONF
-from departure import hold_reason
 from memory import ALIASES, Observation, SpatialMemory, display_name
 from modes import MONITORING, ModeController
+from presence import PresenceTracker
 from snapshots import SnapshotStore
 from spatial import Region
 
 log = logging.getLogger("keepsake.vision")
 
-PERSON = "person"  # detected only to judge whether someone is covering an object
+PERSON = "person"  # detected to judge occlusion and whether someone is in the room
 
 
 def pick_device() -> str:
@@ -78,14 +79,15 @@ class VisionWorker(threading.Thread):
                  modes: ModeController, camera_index: int | str = 0, model_path: str = "yolo11n.pt",
                  conf: float = 0.4, fps: float = 5.0, frame_width: int = 1280,
                  camera_shift_motion: float = 0.5, scan_model_path: str | None = None,
-                 device: str | None = None, preview_width: int = 640, departures=None):
+                 device: str | None = None, preview_width: int = 640,
+                 presence: PresenceTracker | None = None, camera_name: str | None = None):
         super().__init__(daemon=True, name="vision")
         self.memory = memory
         self.regions = regions  # shared list; updated in place by calibration
         self.snapshots = snapshots
         self.modes = modes
-        self.departures = departures  # optional DepartureDetector fed with person boxes
         self.camera_index = camera_index
+        self.camera_name = camera_name  # e.g. "iPhone": wins over camera_index (see cameras.py)
         self.model_path = model_path
         self.scan_model_path = scan_model_path  # larger model used only by Scan room
         self._scan_model = None
@@ -97,6 +99,7 @@ class VisionWorker(threading.Thread):
         self.device = device or pick_device()
         self.camera_shift_motion = camera_shift_motion
         self.motion = MotionDetector()
+        self.presence = presence or PresenceTracker()
         self._ring: deque[tuple[int, np.ndarray]] = deque(maxlen=12)  # (frame_id, snapshot-size frame)
         self._frame_id = 0
         self._shift_frames = 0
@@ -106,7 +109,8 @@ class VisionWorker(threading.Thread):
         self._jpeg_lock = threading.Lock()
         self.status = {"camera": "starting", "error": None, "warning": None, "fps": 0.0,
                        "device": self.device, "inference_width": frame_width,
-                       "motion": 0.0, "detections": [], "model": model_path}
+                       "motion": 0.0, "detections": [], "model": model_path,
+                       **self.presence.status()}
 
     # ---- public ----
     def latest_jpeg(self) -> bytes | None:
@@ -212,11 +216,16 @@ class VisionWorker(threading.Thread):
                                   "press Scan room to update its areas.")
         self.status["warning"] = warning
 
-        detect_failed = False
         try:
             obs = self._detect(model, frame, class_ids)
             for o in obs:
                 o.motion = self.motion.local(o.bbox)
+            if monitoring:
+                if self.presence.update(obs) == "left":
+                    log.info("person left the view")
+            else:  # camera is being moved: nobody "leaves"
+                self.presence.reset()
+            self.status.update(self.presence.status())
             events = self.memory.observe(obs, frame_id=self._frame_id)
             for ev in events:
                 self.snapshots.submit(ev, self._frame_for(ev.get("frame_id")))
@@ -229,16 +238,9 @@ class VisionWorker(threading.Thread):
                 model.predictor = None
             self.status["error"] = f"Detection error: {e}"
             obs = []
-            detect_failed = True
-        if self.departures is not None:
-            try:
-                self.departures.feed([(o.bbox, o.confidence) for o in obs if o.category == PERSON],
-                                     hold_reason(self.modes, self.memory, self.status, detect_failed),
-                                     view_id=self.memory.view_id)
-            except Exception:  # noqa: BLE001 - departure alerts must never stop tracking
-                log.exception("departure detector failed")
         shown = [o for o in obs if o.category in MIN_CONF and o.confidence >= MIN_CONF[o.category]]
-        self._publish(self._resize(frame, self.preview_width), shown)  # only what memory would accept
+        people = [o for o in obs if o.category == PERSON and o.confidence >= self.presence.min_conf]
+        self._publish(self._resize(frame, self.preview_width), shown, people)  # only what's counted
 
     def _scan(self, model, reference: np.ndarray) -> tuple[bytes | None, list[dict]]:
         """Scan room: detect furniture over the last few (steady) frames and propose areas."""
@@ -279,14 +281,24 @@ class VisionWorker(threading.Thread):
             model.predictor = None  # forces a fresh predictor + tracker on the next call
 
     def _open_camera(self):
-        cap = cv2.VideoCapture(self.camera_index)
+        index = self.camera_index
+        if self.camera_name:  # indexes shift as cameras come and go; never fall back to another one
+            found = find_camera(self.camera_name)
+            if found is None:
+                names = ", ".join(n for _, n in list_cameras()) or "none"
+                self.status.update(camera="error", error=(
+                    f"Camera \"{self.camera_name}\" isn't connected (cameras now: {names}). "
+                    "For an iPhone: lock it, keep it still near the Mac, and wait."))
+                return None
+            index = found
+        cap = cv2.VideoCapture(index)
         if not cap.isOpened():
             cap.release()
             self.status.update(camera="error", error=(
-                f"Can't open camera {self.camera_index}. Check the camera index and permission."))
+                f"Can't open camera {index}. Check the camera index and permission."))
             return None
         self.status.update(camera="active", error=None)
-        log.info("camera %s opened", self.camera_index)
+        log.info("camera %s opened%s", index, f" ({self.camera_name})" if self.camera_name else "")
         return cap
 
     @staticmethod
@@ -318,7 +330,8 @@ class VisionWorker(threading.Thread):
                                    bbox=(x0, y0, x1, y1)))
         return obs
 
-    def _publish(self, frame: np.ndarray, obs: list[Observation]) -> None:
+    def _publish(self, frame: np.ndarray, obs: list[Observation],
+                 people: list[Observation] = ()) -> None:
         h, w = frame.shape[:2]
         out = frame.copy()
         for r in list(self.regions):  # region overlays
@@ -326,13 +339,13 @@ class VisionWorker(threading.Thread):
             cv2.rectangle(out, p0, p1, (235, 235, 235), 1)
             cv2.putText(out, r.name, (p0[0] + 6, p0[1] + 18), cv2.FONT_HERSHEY_SIMPLEX,
                         0.5, (245, 245, 245), 1, cv2.LINE_AA)
-        for o in obs:
-            x0, y0, x1, y1 = o.bbox
+        for o, color in [(p, (230, 160, 60)) for p in people] + [(o, (90, 200, 120)) for o in obs]:
+            x0, y0, x1, y1 = o.bbox  # people in blue, tracked items in green
             p0, p1 = (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h))
-            cv2.rectangle(out, p0, p1, (90, 200, 120), 2)
+            cv2.rectangle(out, p0, p1, color, 2)
             label = f"{display_name(o.category)} {o.confidence:.0%}"
             cv2.putText(out, label, (p0[0], max(14, p0[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5, (90, 200, 120), 1, cv2.LINE_AA)
+                        0.5, color, 1, cv2.LINE_AA)
         if self.modes.mode != MONITORING:
             cv2.rectangle(out, (0, 0), (w, 28), (40, 40, 40), -1)
             cv2.putText(out, "Monitoring paused", (10, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.55,

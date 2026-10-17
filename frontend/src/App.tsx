@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ScanLine } from 'lucide-react'
 import { api } from './lib/api'
+import { speechOutputSupported, unlockSpeech } from './lib/voice'
 import type { Health, MoveEvent, QueryResult, Region, TrackedObject } from './lib/api'
 import { ObjectList } from './components/ObjectList'
 import { ObjectDetail } from './components/ObjectDetail'
@@ -50,11 +51,31 @@ export default function App() {
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const [prompt, setPrompt] = useState<{ id: number; text: string } | null>(null)
+  const leftCount = useRef<number | null>(null) // departures already handled
+  const [voiceReady, setVoiceReady] = useState(!speechOutputSupported)
+
+  useEffect(() => {
+    // The first click or key press anywhere lets the app speak on its own afterwards.
+    const unlock = () => setVoiceReady(unlockSpeech())
+    window.addEventListener('pointerdown', unlock, { once: true })
+    window.addEventListener('keydown', unlock, { once: true })
+    return () => {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('keydown', unlock)
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
       const [h, o, e] = await Promise.all([api.health(), api.objects(), api.events(10)])
       setHealth(h)
+      // Someone just walked out of view: offer help. The first poll only sets the baseline.
+      const left = h.person_left_count ?? 0
+      if (leftCount.current !== null && left > leftCount.current) {
+        setPrompt({ id: left, text: 'Are you looking for something?' })
+      }
+      leftCount.current = left
       setObjects(o)
       setEvents(e)
       setOffline(false)
@@ -130,6 +151,15 @@ export default function App() {
         </div>
       </header>
 
+      {!voiceReady && (
+        <button
+          onClick={() => setVoiceReady(unlockSpeech())}
+          className="mb-4 w-full rounded-xl bg-sunken px-4 py-3 text-left text-[14px] text-muted hover:text-ink"
+        >
+          Click anywhere to turn on voice prompts, like “Are you looking for something?” when you leave the room.
+        </button>
+      )}
+
       {offline && (
         <p className="mb-4 rounded-xl bg-caution-soft px-4 py-3 text-caution">
           Can&apos;t reach Keepsake. Showing the last memories loaded. Start the backend to see updates.
@@ -138,7 +168,7 @@ export default function App() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <main className="min-w-0 space-y-5">
-          <SearchPanel onResult={onAnswer} />
+          <SearchPanel onResult={onAnswer} prompt={prompt} objects={objects} />
 
           <div className="flex items-center justify-between gap-3">
             {/* Segmented control: inner radius 8 + padding 4 = outer 12 */}

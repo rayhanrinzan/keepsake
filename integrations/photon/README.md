@@ -9,11 +9,11 @@ Keepsake can't see into pockets or know that you actually left, so reminders are
 on the last observation, never claims that something was forgotten.
 
 ```
-backend (Python)                                 integrations/photon (TypeScript)
-vision.py person boxes ─► departure.py ─► GET /api/departures ◄─ poll ─ departures.ts
-                                          GET /api/objects, /context ──► alerts.ts (eligibility)
-                                                                      ─► notifier.ts ─► Photon ─► iMessage
-                                          POST /api/query ◄── inbound.ts ◄── replies from your phone
+backend (Python)                                     integrations/photon (TypeScript)
+presence.py "left" ─► departure.py ─► GET /api/departures ◄─ poll ─ departures.ts
+                                      GET /api/objects, /context ──► alerts.ts (eligibility)
+                                                                  ─► notifier.ts ─► Photon ─► iMessage
+                                      POST /api/query ◄── inbound.ts ◄── replies from your phone
 ```
 
 The backend only reports possible departures; it never makes network calls, so Keepsake keeps
@@ -49,21 +49,19 @@ is repositioning, scanning, shifted or dark. Several items are combined into one
 departure is handled once and failed sends are not retried. `.data/state.json` keeps handled event
 ids, per-item cooldowns and the pause flag (no phone numbers or message text).
 
-## Exit zone (automatic departures)
+## Automatic departures
 
-The detector is off until you set an exit zone in normalized camera coordinates
-(`[x0, y0, x1, y1]`, e.g. the doorway at the right edge):
+Departures come from the vision worker's `PresenceTracker` (`backend/presence.py`, the same signal
+behind the app's "Are you looking for something?" prompt): someone was seen for 3 frames in a row,
+then nobody for 2 s. So a departure means the room went from occupied to empty. With several people
+in view nothing fires until everyone is gone, and there is no face or identity recognition.
+
+Departures are dropped while the view can't be trusted: Scan room, a camera shift (10 s), dark
+frames or a camera error, because then people "vanish" without leaving. Check the live state with:
 
 ```sh
-curl -X PUT http://127.0.0.1:8000/api/departures/config -H 'Content-Type: application/json' \
-  -d '{"enabled": true, "exit_zone": [0.85, 0, 1, 1]}'
-curl http://127.0.0.1:8000/api/departures/context   # detector state, hold reason, person count
+curl http://127.0.0.1:8000/api/departures/context   # hold reason, person_present, suppressed count
 ```
-
-A possible departure needs one person to be seen in the room, move into the exit zone, then stay
-out of view for 2.5 s (brief detection dropouts don't count). More than one person, Scan room,
-camera shifts, dark frames, detection errors and frame gaps all suppress it. There is no face or
-identity recognition. This is tuned on synthetic tests; tune on the real camera before relying on it.
 
 ## Manual test
 

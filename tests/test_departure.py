@@ -1,185 +1,85 @@
-"""Exit-zone departure detection with synthetic person boxes (5 fps), plus its API."""
+"""Departure feed for Departure Alerts: PresenceTracker "left" events become possible departures."""
 import importlib
+import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import TEST_AREAS
-from departure import IDLE, DepartureDetector, hold_reason, overlap
+from conftest import TEST_AREAS, obs
+from departure import DepartureFeed, hold_reason
+from presence import PresenceTracker
 from spatial import save_regions
 
-EXIT = (0.85, 0.0, 1.0, 1.0)  # right edge of the frame is the doorway
-ROOM, NEAR_EXIT, IN_EXIT = (0.3, 0.2, 0.5, 0.9), (0.6, 0.2, 0.8, 0.9), (0.84, 0.2, 1.0, 0.9)
-LEFT_EDGE = (0.0, 0.2, 0.12, 0.9)
+
+def walk(tracker, feed, frames, person, t, hold=None, step=0.2):
+    """Feed frames through the real PresenceTracker and sync the feed after each, like polling."""
+    out = []
+    for _ in range(frames):
+        tracker.update([obs("person", conf=0.8, size=0.4)] if person else [], now=t)
+        ev = feed.sync(tracker.status(), hold, "view-a")
+        if ev:
+            out.append(ev)
+        t += step
+    return out, t
 
 
-class Feed:
-    def __init__(self, det):
-        self.det, self.t, self.events = det, 0.0, []
-
-    def frames(self, n, *boxes, hold=None, conf=0.9):
-        for _ in range(n):
-            ev = self.det.feed([(b, conf) for b in boxes], hold, now=self.t)
-            if ev:
-                self.events.append(ev)
-            self.t += 0.2
-
-    def walk_out(self):
-        self.frames(5, ROOM)
-        self.frames(3, NEAR_EXIT)
-        self.frames(3, IN_EXIT)
-        self.frames(15)  # 3 s gone
+def test_someone_leaving_the_room_is_one_departure():
+    p, f = PresenceTracker(), DepartureFeed()
+    f.sync(p.status(), None, "view-a")  # baseline
+    evs, t = walk(p, f, 10, True, 0.0)
+    evs2, _ = walk(p, f, 15, False, t)  # 3 s gone
+    assert evs == [] and len(evs2) == 1
+    assert evs2[0]["source"] == "presence" and evs2[0]["view_id"] == "view-a"
+    assert f.events_after(0) == evs2 and f.latest_id() == 1
 
 
-@pytest.fixture
-def det():
-    d = DepartureDetector(event_gap_seconds=30)
-    d.configure(True, EXIT)
-    return d
+def test_brief_dropout_is_not_a_departure():
+    p, f = PresenceTracker(), DepartureFeed()
+    f.sync(p.status(), None, "v")
+    _, t = walk(p, f, 10, True, 0.0)
+    evs, t = walk(p, f, 5, False, t)  # 1 s missed detections
+    evs2, _ = walk(p, f, 10, True, t)
+    assert evs == [] and evs2 == []
 
 
-def test_overlap():
-    assert overlap(IN_EXIT, EXIT) > 0.9 and overlap(ROOM, EXIT) == 0
+def test_departures_from_before_the_first_poll_are_ignored():
+    f = DepartureFeed()
+    assert f.sync({"person_left_count": 4, "person_left_at": 1.0}, None, "v") is None
+    assert f.sync({"person_left_count": 5, "person_left_at": 2.0}, None, "v")["id"] == 1
 
 
-def test_walking_out_through_exit_emits_one_departure(det):
-    f = Feed(det)
-    f.walk_out()
-    assert len(f.events) == 1 and f.events[0]["source"] == "detector"
-    assert det.state == IDLE and det.events_after(0) == f.events
+@pytest.mark.parametrize("hold", ["camera_shift", "camera_dark", "camera_repositioning"])
+def test_untrusted_view_suppresses_departures(hold):
+    f = DepartureFeed()
+    f.sync({"person_left_count": 0}, None, "v")
+    assert f.sync({"person_left_count": 1, "person_left_at": 1.0}, hold, "v") is None
+    assert f.events_after(0) == [] and f.status()["suppressed"] == 1
+    assert f.status()["last_suppressed"] == hold
 
 
-def test_leaving_view_elsewhere_is_not_a_departure(det):
-    f = Feed(det)
-    f.frames(5, ROOM)
-    f.frames(3, LEFT_EDGE)
-    f.frames(20)
-    assert f.events == []
+def test_no_presence_data_means_no_events():
+    f = DepartureFeed()
+    assert f.sync({"camera": "disabled"}, None, "v") is None
+    assert f.latest_id() == 0
 
 
-def test_walking_around_the_room_is_not_a_departure(det):
-    f = Feed(det)
-    for _ in range(4):
-        f.frames(3, ROOM)
-        f.frames(3, NEAR_EXIT)
-    assert f.events == []
+def test_manual_departures_get_their_own_ids():
+    f = DepartureFeed()
+    f.sync({"person_left_count": 0}, None, "v")
+    a = f.simulate("v")
+    b = f.sync({"person_left_count": 1, "person_left_at": 1.0}, None, "v")
+    assert (a["source"], b["source"]) == ("manual", "presence") and b["id"] == a["id"] + 1
+    assert f.events_after(a["id"]) == [b]
 
 
-def test_brief_detection_dropout_at_exit_is_not_a_departure(det):
-    f = Feed(det)
-    f.frames(5, ROOM)
-    f.frames(3, IN_EXIT)
-    f.frames(5)  # 1 s missed detections
-    f.frames(3, IN_EXIT)
-    f.frames(5, ROOM)  # back in the room
-    f.frames(20, ROOM)
-    assert f.events == []
-
-
-def test_brief_dropout_mid_room_is_not_a_departure(det):
-    f = Feed(det)
-    f.frames(5, ROOM)
-    f.frames(4)
-    f.frames(5, ROOM)
-    assert f.events == [] and det.state != IDLE
-
-
-def test_person_first_seen_inside_exit_zone_must_come_from_the_room(det):
-    f = Feed(det)
-    f.frames(5, IN_EXIT)  # walked in through the door and stayed there
-    f.frames(20)
-    assert f.events == []
-
-
-def test_lingering_at_exit_then_vanishing_late_is_not_a_departure(det):
-    f = Feed(det)
-    f.frames(5, ROOM)
-    f.frames(3, IN_EXIT)
-    det._last_at_exit = f.t - 10  # last seen at the exit long before the gap
-    f.frames(20)
-    assert f.events == []
-
-
-@pytest.mark.parametrize("reason", ["camera_repositioning", "camera_shift", "camera_dark",
-                                    "detection_error"])
-def test_holds_suppress_departures(det, reason):
-    f = Feed(det)
-    f.frames(5, ROOM)
-    f.frames(3, IN_EXIT)
-    f.frames(15, hold=reason)
-    f.frames(15)
-    assert f.events == [] and det.status()["hold"] is None
-
-
-def test_multiple_people_suppress_departures(det):
-    f = Feed(det)
-    f.frames(5, ROOM)
-    f.frames(3, IN_EXIT, ROOM)
-    f.frames(15, ROOM)  # one person left; the other is still in the room
-    f.frames(15)
-    assert f.events == []
-
-
-def test_overlapping_boxes_on_one_person_still_count_as_one(det):
-    f = Feed(det)
-    dup = lambda b: (b[0] + 0.01, b[1] + 0.05, b[2] - 0.01, b[3])  # a second box inside the first
-    f.frames(5, ROOM, dup(ROOM))
-    f.frames(3, NEAR_EXIT, dup(NEAR_EXIT))
-    f.frames(3, IN_EXIT, dup(IN_EXIT))
-    f.frames(15)
-    assert len(f.events) == 1 and det.status()["person_count"] == 0
-
-
-def test_camera_gap_restarts_the_sequence(det):
-    f = Feed(det)
-    f.frames(5, ROOM)
-    f.frames(3, IN_EXIT)
-    f.t += 5  # no frames for 5 s (camera dropped)
-    f.frames(15)
-    assert f.events == []
-
-
-def test_low_confidence_people_are_ignored(det):
-    f = Feed(det)
-    f.frames(5, ROOM, conf=0.2)
-    f.frames(3, IN_EXIT, conf=0.2)
-    f.frames(15)
-    assert f.events == []
-
-
-def test_disabled_or_no_zone_never_emits():
-    for enabled, zone in [(False, EXIT), (True, None)]:
-        d = DepartureDetector()
-        d.configure(enabled, zone)
-        f = Feed(d)
-        f.walk_out()
-        assert f.events == []
-
-
-def test_repeat_departures_are_spaced(det):
-    f = Feed(det)
-    f.walk_out()
-    f.walk_out()  # within 30 s
-    assert len(f.events) == 1
-    f.t += 31
-    f.walk_out()
-    assert len(f.events) == 2
-
-
-def test_invalid_zone_rejected():
-    with pytest.raises(ValueError):
-        DepartureDetector().configure(True, [0.5, 0.0, 0.2, 1.0])
-
-
-def test_hold_reason_reads_modes_and_memory():
-    class M:
-        mode, paused, _suspended_until = "MONITORING", False, None
-    assert hold_reason(M(), M(), {}) is None
-    m = M()
-    m.mode = "CALIBRATING"
-    assert hold_reason(m, M(), {}) == "camera_repositioning"
-    assert hold_reason(M(), M(), {"camera_shift_at": 100}, now=105) == "camera_shift"
-    assert hold_reason(M(), M(), {}, detect_failed=True) == "detection_error"
+def test_hold_reason_reads_modes_memory_and_camera():
+    m = SimpleNamespace(mode="MONITORING", paused=False, _suspended_until=None)
+    assert hold_reason(m, m, {"camera": "active"}) is None
+    assert hold_reason(SimpleNamespace(mode="CALIBRATING"), m, {}) == "camera_repositioning"
+    assert hold_reason(m, m, {"camera_shift_at": 100}, now=105) == "camera_shift"
+    assert hold_reason(m, m, {"warning": "The camera is sending black frames. …"}) == "camera_dark"
+    assert hold_reason(m, m, {"camera": "error"}) == "camera_unavailable"
 
 
 @pytest.fixture
@@ -205,8 +105,21 @@ def test_departure_api(api):
     assert c.get(f"/api/departures?after={ev['id']}").json()["events"] == []
     ctx = c.get("/api/departures/context").json()
     assert ctx["hold"] is None and ctx["mode"] == "MONITORING" and ctx["places"] == {}
-    assert c.put("/api/departures/config", json={"enabled": True, "exit_zone": [2, 0, 3, 1]}).status_code == 422
-    cfg = c.put("/api/departures/config", json={"enabled": True, "exit_zone": list(EXIT)}).json()
-    assert cfg["enabled"] and cfg["exit_zone"] == list(EXIT)
-    c.post("/api/reposition/start")
-    assert c.get("/api/departures/context").json()["hold"] == "camera_repositioning"
+
+
+def test_departure_api_follows_the_worker_presence(api):
+    c, main = api
+    main.worker = SimpleNamespace(status={"camera": "active", "person_left_count": 0,
+                                          "person_left_at": None, "person_present": True})
+    try:
+        assert c.get("/api/departures").json()["events"] == []  # baseline
+        main.worker.status.update(person_left_count=1, person_left_at=1792250000.0,
+                                  person_present=False)
+        evs = c.get("/api/departures").json()["events"]
+        assert [e["source"] for e in evs] == ["presence"] and evs[0]["at"].startswith("2026-10-17")
+        main.worker.status.update(person_left_count=2, camera_shift_at=time.time())
+        assert c.get("/api/departures?after=1").json()["events"] == []  # camera moved: suppressed
+        c.post("/api/reposition/start")
+        assert c.get("/api/departures/context").json()["hold"] == "camera_repositioning"
+    finally:
+        main.worker = None

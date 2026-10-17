@@ -107,6 +107,7 @@ export function CameraPanel({ health }: { health: Health | null }) {
           {health.detections.length === 0
             ? 'No tracked items in view'
             : `In view: ${health.detections.map((d) => d.name).join(', ')}`}
+          {health.person_present && ' · Person in view'}
         </p>
       )}
     </section>

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from catalog import CATALOG
 from database import Database
-from departure import DepartureDetector
+from departure import DepartureFeed
 from departure_api import departure_router
 from memory import SpatialMemory, answer_query, parse_query
 from modes import ModeController, ModeError
@@ -45,7 +45,7 @@ snapshots = SnapshotStore(db, env("SNAPSHOT_DIR", str(HERE / "data" / "snapshots
                           retention=int(env("SNAPSHOT_RETENTION", "20")),
                           cooldown_seconds=float(env("SNAPSHOT_COOLDOWN", "3")))
 modes = ModeController(memory)
-departures = DepartureDetector(db)  # possible departures for Departure Alerts (integrations/photon)
+departures = DepartureFeed()  # possible departures for Departure Alerts (integrations/photon)
 _regions_before: list = []  # areas when the current scan started
 worker = None
 
@@ -58,13 +58,14 @@ async def lifespan(_: FastAPI):
         source = env("CAMERA_INDEX", "0")  # webcam index, or a video file path for testing
         worker = VisionWorker(memory, regions, snapshots, modes,
                               camera_index=int(source) if source.isdigit() else source,
+                              camera_name=env("CAMERA_NAME", "") or None,  # e.g. iPhone; wins over the index
                               model_path=env("MODEL", DEFAULT_MODEL),
                               # candidate cutoff; each item then needs its own min_conf (catalog.py)
                               conf=float(env("DETECT_CONFIDENCE", DEFAULT_CONF)),
                               fps=float(env("INFERENCE_FPS", "5")),
                               scan_model_path=env("SCAN_MODEL", str(HERE / "models" / ("yolo11m.pt" if (HERE / "models" / "yolo11m.pt").exists() else "yolo11n.pt"))),
                               frame_width=int(env("INFERENCE_WIDTH", "1280")),
-                              device=env("DEVICE", "") or None, departures=departures)
+                              device=env("DEVICE", "") or None)
         worker.start()
     yield
     if worker:

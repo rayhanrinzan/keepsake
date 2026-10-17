@@ -71,6 +71,8 @@ export interface Health {
   proposal: ProposedArea[]
   view_id: string
   capture_enabled: boolean
+  person_present?: boolean
+  person_left_count?: number
 }
 
 export interface QueryResult {

@@ -27,7 +27,7 @@ export interface CatalogItem {
 export interface DepartureEvent {
   id: number;
   type: "possible_departure";
-  source: "detector" | "manual";
+  source: "presence" | "manual";
   at: string;
   view_id: string | null;
 }

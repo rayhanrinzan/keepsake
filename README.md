@@ -59,7 +59,14 @@ Open http://127.0.0.1:5173. For voice, use Chrome, Edge or Safari.
 cd backend && ../.venv/bin/python check_camera.py 0     # triggers the permission prompt; try 1, 2…
 ```
 
-With an iPhone nearby, Continuity Camera is often index 0 and the built-in camera index 1. Set `CTRLF_CAMERA_INDEX` to choose:
+Camera numbers change: macOS numbers the cameras it sees right now, so with the iPhone connected it's usually 0 and the built-in camera 1, and without it the built-in camera is 0. Pick the camera by name instead (`check_camera.py` with no argument lists them):
+
+```bash
+cd backend && ../.venv/bin/python check_camera.py
+cd backend && CTRLF_CAMERA_NAME=iPhone ../.venv/bin/python main.py
+```
+
+With a name set, Keepsake waits for that camera instead of opening another one. Or set `CTRLF_CAMERA_INDEX`:
 
 ```bash
 cd backend && CTRLF_CAMERA_INDEX=1 ../.venv/bin/python main.py
@@ -87,6 +94,7 @@ All settings are optional environment variables, read at backend start. See [.en
 | Variable | Default | Meaning |
 |---|---|---|
 | `CTRLF_CAMERA_INDEX` | `0` | Camera index, or a video file path for testing (video files loop) |
+| `CTRLF_CAMERA_NAME` | unset | Pick the camera by name, e.g. `iPhone` (macOS). Wins over the index |
 | `CTRLF_CAMERA_ENABLED` | `1` | `0` runs the API with no camera |
 | `CTRLF_DETECT_CONFIDENCE` | `0.15` | Detector candidate cutoff. Items then need their own `min_conf` from catalog.py |
 | `CTRLF_MODEL` | `backend/models/yolov8s-worldv2.pt` | Detector. A COCO model (`yolo11n.pt`) also works, but can't see keys, wallets, AirPods or glasses |
@@ -168,7 +176,8 @@ These tests check the logic, not real-world perception accuracy. See the live ch
 | Symptom | Fix |
 |---|---|
 | "Camera unavailable" | Start the backend from Terminal and run `check_camera.py` to grant permission |
-| Camera pops up on your iPhone, then disappears | Pick the camera with `CTRLF_CAMERA_INDEX` (iPhone is often 0, built-in camera 1) |
+| Camera pops up on your iPhone, then disappears | Pick the camera with `CTRLF_CAMERA_NAME=iPhone` |
+| Sometimes the iPhone, sometimes the Mac camera | Use `CTRLF_CAMERA_NAME=iPhone`; indexes shift when the iPhone connects or drops |
 | "The camera is sending black frames" | Uncover the lens or restart the backend (Continuity Camera sometimes connects black) |
 | "The camera view changed a lot" | If you moved the camera, press Scan room |
 | Scan missed a piece of furniture | Add it by hand in the review step. Pretrained COCO has no dresser, shelf, desk or ottoman class, and tables show up as "Table" |
