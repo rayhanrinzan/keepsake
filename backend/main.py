@@ -30,7 +30,7 @@ def env(name: str, default: str) -> str:
 regions = load_regions()
 db = Database(env("DB_PATH", str(HERE / "data" / "ctrlf.db")))
 memory = SpatialMemory(db, regions, stability=int(env("STABILITY_FRAMES", "4")),
-                       min_confidence=float(env("CONFIDENCE", "0.15")),
+                       min_confidence=float(env("CONFIDENCE", "0.35")),  # fallback; per-item min_conf in catalog.py
                        absence_seconds=float(env("ABSENCE_SECONDS", "2.0")),
                        move_threshold=float(env("MOVE_THRESHOLD", "0.06")),
                        settle_seconds=float(env("SETTLE_SECONDS", "0.8")))
@@ -51,7 +51,7 @@ async def lifespan(_: FastAPI):
         worker = VisionWorker(memory, regions, snapshots, modes,
                               camera_index=int(source) if source.isdigit() else source,
                               model_path=env("MODEL", str(HERE / "models" / "yolov8s-worldv2.pt")),
-                              conf=float(env("CONFIDENCE", "0.15")),
+                              conf=float(env("DETECT_CONFIDENCE", "0.15")),  # candidate cutoff; items filter higher
                               fps=float(env("INFERENCE_FPS", "5")),
                               scan_model_path=env("SCAN_MODEL", str(HERE / "models" / ("yolo11m.pt" if (HERE / "models" / "yolo11m.pt").exists() else "yolo11n.pt"))),
                               frame_width=int(env("INFERENCE_WIDTH", "1280")),

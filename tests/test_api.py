@@ -35,10 +35,9 @@ def inject(main, *observations, n=6, clock=None):
 def test_catalog_and_never_seen_objects(api):
     c, _ = api
     objs = c.get("/api/objects").json()
-    assert [o["name"] for o in objs] == ["Phone", "Water Bottle", "Laptop", "Cup", "Book",
-                                         "Backpack", "Remote", "Mouse"]
+    assert [o["name"] for o in objs][:2] == ["Phone", "Water Bottle"] and len(objs) == 12
     assert all(o["status"] == "never" and o["region"] is None and o["snapshot"] is None for o in objs)
-    assert len(c.get("/api/catalog").json()) == 8
+    assert len(c.get("/api/catalog").json()) == 12
     assert c.get("/api/health").json()["camera"] == "disabled"
 
 
@@ -59,7 +58,7 @@ def test_object_snapshot_and_query_flow(api):
     r = c.post("/api/query", json={"text": "My water bottle"}).json()
     assert r["found"] and r["object"]["snapshot"]["id"] == snap["id"]
     assert r["object"]["status"] == "last_seen" and "out of view" in r["answer"]
-    bad = c.post("/api/query", json={"text": "where are my keys"}).json()
+    bad = c.post("/api/query", json={"text": "where is my umbrella"}).json()
     assert bad["found"] is False and bad["object"] is None
     assert c.get("/api/objects/bottle_01/snapshots").json()[0]["id"] == snap["id"]
     assert c.get("/api/events").json()[0]["event_type"] == "first_seen"

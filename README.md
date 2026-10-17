@@ -20,8 +20,8 @@ camera ─► OpenCV ─► YOLO11n + ByteTrack ─► area (from Scan room: Bed
      React app (List · Map · Voice · Reposition) ◄── FastAPI on 127.0.0.1:8000
 ```
 
-- **Detection:** pretrained Ultralytics YOLO11n (COCO classes) at 1280 px wide, about 5 fps, on the GPU when available (Apple MPS or CUDA, falling back to the CPU). The higher resolution matters: across a room, items are too small to detect at 640. There's no training, no cloud vision, and no YOLO-World.
-- **Tracked items** (in [backend/catalog.py](backend/catalog.py)): Phone, Water Bottle, Laptop, Cup, Book, Backpack, Remote, Mouse. The app assumes one of each.
+- **Detection:** Ultralytics **YOLO-World** (`yolov8s-worldv2`), an open-vocabulary YOLO prompted with each item's name, so it can find things outside COCO such as keys, wallets, AirPods and glasses. It runs at 1280 px wide, about 5 fps, on the GPU when available (Apple MPS or CUDA, falling back to the CPU). The higher resolution matters: across a room, items are too small to detect at 640. There's no training, no cloud vision, and no YOLO-World.
+- **Tracked items** (in [backend/catalog.py](backend/catalog.py)): Phone, Water Bottle, Keys, Wallet, AirPods, Glasses, Laptop, Cup, Book, Backpack, Remote, Mouse. The app assumes one of each. Each item has its own confidence threshold (`min_conf`), because open-vocabulary scores vary by prompt. Short prompts work best ("bottle" scores about 0.7, "water bottle" about 0.36).
 - **Room areas come from Scan room**, not a fixed layout. Keepsake runs the larger YOLO11m model over a few steady frames and proposes an area for each piece of furniture it reliably sees: bed, couch, chair, table, TV, sink, fridge, oven, microwave, toilet and bench. You review the proposal and can rename ("Table" → "Desk"), resize, delete or add areas (COCO has no dresser, shelf or ottoman class). An item gets the most specific area it sits in, "near the <area>" if it's just outside one, or the left/middle/right of the room if there are no areas.
 - **When a photo is taken:** an item must be seen first (first sighting), moved to another area, or moved more than `CTRLF_MOVE_THRESHOLD` (6% of the frame) within the same area. It must then **settle**: stay within a small radius for `CTRLF_SETTLE_SECONDS` (0.8 s) and at least `CTRLF_STABILITY_FRAMES` frames, with little motion around it. Only then does Keepsake update the location and save a photo. It picks the clearest frame from that settled window, skipping frames where a detected person covers the item.
 - **What doesn't trigger a photo:** someone walking past, jitter, an item picked up and put back in the same spot, or a brief misdetection.
@@ -37,7 +37,7 @@ python3.12 -m venv .venv            # or: uv venv --python 3.12 .venv
 npm --prefix frontend install
 ```
 
-The YOLO weights download into `backend/models/` on first use: `yolo11n.pt` (about 5 MB) for tracking, and `yolo11m.pt` (about 40 MB) the first time you scan the room.
+Model weights download on first use: `yolov8s-worldv2.pt` (about 25 MB) plus OpenAI CLIP (about 340 MB, cached by the `clip` package) for tracking, and `yolo11m.pt` (about 40 MB) the first time you scan the room. CLIP is installed by `requirements.txt`; without it, the camera panel shows "YOLO-World needs CLIP".
 
 ## Run
 
@@ -88,7 +88,8 @@ All settings are optional environment variables, read at backend start. See [.en
 |---|---|---|
 | `CTRLF_CAMERA_INDEX` | `0` | Camera index, or a video file path for testing (video files loop) |
 | `CTRLF_CAMERA_ENABLED` | `1` | `0` runs the API with no camera |
-| `CTRLF_CONFIDENCE` | `0.4` | Minimum YOLO confidence |
+| `CTRLF_DETECT_CONFIDENCE` | `0.15` | Detector candidate cutoff. Items then need their own `min_conf` from catalog.py |
+| `CTRLF_MODEL` | `backend/models/yolov8s-worldv2.pt` | Detector. A COCO model (`yolo11n.pt`) also works, but can't see keys, wallets, AirPods or glasses |
 | `CTRLF_INFERENCE_FPS` | `5` | Detection rate |
 | `CTRLF_INFERENCE_WIDTH` | `1280` | Detection resolution. Lower it (e.g. 640) on slow CPUs if items are close to the camera |
 | `CTRLF_DEVICE` | auto | `mps`, `cuda` or `cpu`. Defaults to the GPU if there is one |
