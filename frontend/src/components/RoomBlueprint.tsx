@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, WheelEvent } from 'react'
-import { Box, Minus, Plus, RotateCcw, RotateCw, Square } from 'lucide-react'
+import { Box, Camera, Minus, Plus, RotateCcw, RotateCw, Square } from 'lucide-react'
 import type { Region, TrackedObject } from '../lib/api'
 import { PIN, pinColor } from '../lib/pins'
+import { placeName, timeAgo } from '../lib/format'
+import type { Trace } from '../lib/trace'
+import { SnapshotPhoto } from './SnapshotPhoto'
 
 /*
  * The room as a 3D blueprint: floor, the two back walls, scanned furniture as
@@ -31,7 +34,7 @@ const HEIGHT: Record<string, number> = {
   refrigerator: 30, oven: 18, microwave: 8, sink: 16, toilet: 8,
 }
 
-type Mode = '3d' | 'top'
+type Mode = '3d' | 'top' | 'camera'
 type Pt = [number, number]
 type Rect = { x0: number; y0: number; x1: number; y1: number }
 
@@ -57,7 +60,10 @@ function frame(turns: number) {
 }
 
 const projector = (mode: Mode) => (x: number, y: number, z = 0): Pt =>
-  mode === 'top' ? [x, y] : [(x - y) * C, (x + y) * S - z]
+  mode === '3d' ? [(x - y) * C, (x + y) * S - z] : [x, y]
+
+/** Width of the camera view in map units; its height follows the frame's shape. */
+const CAM_W = 160
 
 const poly = (pts: Pt[]) => pts.map((p) => p.join(',')).join(' ')
 
@@ -71,10 +77,18 @@ interface Props {
   regions: Region[]
   objects: TrackedObject[]
   highlightId: string | null
+  /** Item picked in the list: its photo pops up over its pin. */
+  peekId: string | null
   onSelect: (id: string) => void
+  onOpen: (id: string) => void
+  /** Line drawing of the live camera frame, for the Camera view. */
+  trace: Trace | null
 }
 
-export function RoomBlueprint({ regions, objects, highlightId, onSelect }: Props) {
+export function RoomBlueprint({ regions, objects, highlightId, peekId, onSelect, onOpen, trace }: Props) {
+  const [hoverPin, setHoverPin] = useState<string | null>(null)
+  const leave = useRef(0)
+  const wrapRef = useRef<HTMLDivElement>(null)
   const [mode, setModeState] = useState<Mode>('3d')
   const [turns, setTurns] = useState(0)
   // `view` is what's drawn; `target` is where it's heading. A spring eases one
@@ -110,10 +124,13 @@ export function RoomBlueprint({ regions, objects, highlightId, onSelect }: Props
   const f = useMemo(() => frame(turns), [turns])
   const p = useMemo(() => projector(mode), [mode])
   const is3d = mode === '3d'
+  const isCam = mode === 'camera'
+  const camH = CAM_W / (trace?.aspect ?? 16 / 9)
 
   const viewBox = useMemo(() => {
     // The items panel floats over the left of the map, so the room sits a little right of center.
     if (mode === 'top') return [-6 - f.w * 0.45, -10, f.w * 1.45 + 12, f.h + 18]
+    if (mode === 'camera') return [-6 - CAM_W * 0.45, -8, CAM_W * 1.45 + 12, camH + 16]
     const pts = [p(0, 0, WALL), p(f.w, 0, WALL), p(0, f.h, WALL), p(f.w, f.h, 0), p(0, f.h, 0), p(f.w, 0, 0)]
     const xs = pts.map((q) => q[0])
     const ys = pts.map((q) => q[1])
@@ -121,7 +138,7 @@ export function RoomBlueprint({ regions, objects, highlightId, onSelect }: Props
     const w = Math.max(...xs) - Math.min(...xs)
     const left = w * 0.4
     return [Math.min(...xs) - pad - left, Math.min(...ys) - pad, w + pad * 2 + left, Math.max(...ys) - Math.min(...ys) + pad * 2]
-  }, [mode, f.w, f.h, p])
+  }, [mode, f.w, f.h, p, camH])
 
   // Coordinates of a screen point inside the viewBox.
   const toSvg = useCallback((clientX: number, clientY: number) => {
@@ -202,19 +219,40 @@ export function RoomBlueprint({ regions, objects, highlightId, onSelect }: Props
     .map((reg) => ({ reg, r: f.rect(toRoom(reg)), h: HEIGHT[reg.kind] ?? 8 }))
     .sort((a, b) => a.r.x0 + a.r.y0 + a.r.x1 + a.r.y1 - (b.r.x0 + b.r.y0 + b.r.x1 + b.r.y1))
 
+  // Each pin as drawn: where it touches its surface (`base`) and the floating dot (`dot`).
   const pins = objects
     .filter((o) => o.seen && o.x != null && o.y != null)
     .map((o) => {
+      if (isCam) {
+        const dot: Pt = [o.x! * CAM_W, o.y! * camH]
+        return { o, base: dot, dot, depth: o.y! }
+      }
       const area = areaOf(o, regions)
       const [x, y] = f.pt(o.x! * ROOM_W, o.y! * ROOM_D)
-      return { o, x, y, z: area ? HEIGHT[area.kind] ?? 8 : 0 }
+      const z = is3d && area ? HEIGHT[area.kind] ?? 8 : 0
+      return { o, base: p(x, y, z), dot: p(x, y, z + (is3d ? 4 : 0)), depth: x + y }
     })
-    .sort((a, b) => a.x + a.y - (b.x + b.y))
+    .sort((a, b) => a.depth - b.depth)
+
+  // The photo card follows the pin you hover, or the item picked in the list.
+  const peek = pins.find((pin) => pin.o.object_id === (hoverPin ?? peekId))
+  const peekAt = (() => {
+    const m = svgRef.current?.getScreenCTM()
+    const box = wrapRef.current?.getBoundingClientRect()
+    if (!peek || !m || !box) return null
+    const q = new DOMPoint(peek.dot[0] * view.s + view.tx, peek.dot[1] * view.s + view.ty).matrixTransform(m)
+    return { left: q.x - box.left, top: q.y - box.top }
+  })()
+  const hover = (id: string | null) => {
+    clearTimeout(leave.current)
+    if (id) setHoverPin(id)
+    else leave.current = setTimeout(() => setHoverPin(null), 150)
+  }
 
   const ns = { vectorEffect: 'non-scaling-stroke' as const }
 
   return (
-    <div className="relative size-full">
+    <div ref={wrapRef} className="relative size-full">
       <svg
         ref={svgRef}
         className="blueprint size-full cursor-grab touch-none select-none active:cursor-grabbing"
@@ -226,6 +264,35 @@ export function RoomBlueprint({ regions, objects, highlightId, onSelect }: Props
         aria-label="Blueprint of the room with a pin for each remembered item"
       >
         <g transform={`translate(${view.tx} ${view.ty}) scale(${view.s})`}>
+          {isCam ? (
+            <>
+              {/* What the camera sees, traced into blueprint lines, with the scanned areas on top */}
+              <rect {...ns} x={0} y={0} width={CAM_W} height={camH} fill="rgba(88,168,248,0.04)" stroke={LINE} strokeWidth={1.2} />
+              {trace ? (
+                <image href={trace.url} x={0} y={0} width={CAM_W} height={camH} preserveAspectRatio="none" />
+              ) : (
+                <text x={CAM_W / 2} y={camH / 2} className="blueprint-label" textAnchor="middle">
+                  THE CAMERA OUTLINE SHOWS UP WHEN THE CAMERA IS ON
+                </text>
+              )}
+              {regions.map((reg) => (
+                <g key={reg.name}>
+                  <rect
+                    {...ns}
+                    x={reg.x0 * CAM_W}
+                    y={reg.y0 * camH}
+                    width={(reg.x1 - reg.x0) * CAM_W}
+                    height={(reg.y1 - reg.y0) * camH}
+                    fill="rgba(124,194,254,0.12)"
+                    stroke={LINE}
+                    strokeDasharray="4 3"
+                  />
+                  <text x={reg.x0 * CAM_W + 1.5} y={reg.y0 * camH + 4} className="blueprint-label">{reg.name.toUpperCase()}</text>
+                </g>
+              ))}
+            </>
+          ) : (
+          <>
           {/* Floor and its grid */}
           <polygon points={poly([p(0, 0), p(f.w, 0), p(f.w, f.h), p(0, f.h)])} fill="rgba(88,168,248,0.05)" />
           {Array.from({ length: Math.floor(f.w / 5) + 1 }, (_, i) => (
@@ -268,12 +335,12 @@ export function RoomBlueprint({ regions, objects, highlightId, onSelect }: Props
             )
           })}
 
+          </>
+          )}
+
           {/* Item pins: a dot floating over where it was last seen, with a drop line */}
-          {pins.map(({ o, x, y, z }) => {
+          {pins.map(({ o, base, dot: [px, py] }) => {
             const color = pinColor(o)
-            const lift = is3d ? 4 : 0
-            const base = p(x, y, is3d ? z : 0)
-            const [px, py] = p(x, y, (is3d ? z : 0) + lift)
             const highlighted = o.object_id === highlightId
             const dashed = !o.visible
             return (
@@ -281,6 +348,8 @@ export function RoomBlueprint({ regions, objects, highlightId, onSelect }: Props
                 key={o.object_id}
                 className="blueprint-pin cursor-pointer"
                 onClick={() => !suppressClick.current && onSelect(o.object_id)}
+                onMouseEnter={() => hover(o.object_id)}
+                onMouseLeave={() => hover(null)}
               >
                 {is3d && <ellipse cx={base[0]} cy={base[1]} rx={2.6} ry={1.3} fill={color} opacity={0.25} />}
                 {is3d && <line {...ns} x1={base[0]} y1={base[1]} x2={px} y2={py} stroke={color} strokeDasharray="2 2" />}
@@ -294,15 +363,39 @@ export function RoomBlueprint({ regions, objects, highlightId, onSelect }: Props
         </g>
       </svg>
 
+      {peek && peekAt && (
+        <div
+          className="peek enter"
+          style={{ left: peekAt.left, top: peekAt.top }}
+          onMouseEnter={() => hover(peek.o.object_id)}
+          onMouseLeave={() => hover(null)}
+        >
+          <button onClick={() => onOpen(peek.o.object_id)} className="block w-full text-left">
+            {peek.o.snapshot ? (
+              <SnapshotPhoto snapshot={peek.o.snapshot} alt={`Last photo of your ${peek.o.name.toLowerCase()}`} full className="rounded-xl" />
+            ) : (
+              <span className="flex aspect-video items-center justify-center rounded-xl bg-sky/10 text-[13px] text-muted">No photo yet</span>
+            )}
+            <span className="mt-2 block px-1 font-medium">{peek.o.name}</span>
+            <span className="block px-1 text-[13px] text-muted">
+              {placeName(peek.o.region!)}{peek.o.last_seen ? ` · ${timeAgo(peek.o.last_seen)}` : ''}
+            </span>
+          </button>
+        </div>
+      )}
+
       <div className="absolute right-4 bottom-24 flex flex-wrap justify-end gap-2 sm:right-6 md:bottom-6">
         <div className="seg">
-          <button className={is3d ? 'on' : ''} onClick={() => setMode('3d')} aria-label="3D view"><Box className="size-4" /> 3D</button>
-          <button className={is3d ? '' : 'on'} onClick={() => setMode('top')} aria-label="Top-down view"><Square className="size-4" /> Top</button>
+          <button className={mode === '3d' ? 'on' : ''} onClick={() => setMode('3d')} aria-label="3D view"><Box className="size-4" /> 3D</button>
+          <button className={mode === 'top' ? 'on' : ''} onClick={() => setMode('top')} aria-label="Top-down view"><Square className="size-4" /> Top</button>
+          <button className={isCam ? 'on' : ''} onClick={() => setMode('camera')} aria-label="Camera view"><Camera className="size-4" /> Camera</button>
         </div>
-        <div className="seg">
-          <button onClick={() => turn(-1)} aria-label="Rotate left"><RotateCcw className="size-4" /></button>
-          <button onClick={() => turn(1)} aria-label="Rotate right"><RotateCw className="size-4" /></button>
-        </div>
+        {!isCam && (
+          <div className="seg">
+            <button onClick={() => turn(-1)} aria-label="Rotate left"><RotateCcw className="size-4" /></button>
+            <button onClick={() => turn(1)} aria-label="Rotate right"><RotateCw className="size-4" /></button>
+          </div>
+        )}
         <div className="seg">
           <button onClick={() => zoomAt(1 / 1.6)} aria-label="Zoom out"><Minus className="size-4" /></button>
           <button className="w-14 justify-center tabular-nums" onClick={reset} aria-label="Reset zoom">

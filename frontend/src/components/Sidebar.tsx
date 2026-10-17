@@ -5,9 +5,9 @@ import type { ReactNode } from 'react'
 export type View = 'map' | 'list' | 'settings'
 
 const TABS: { key: View; label: string; icon: LucideIcon; bg: string }[] = [
-  { key: 'map', label: 'Map', icon: Map, bg: 'radial-gradient(120% 90% at 50% 100%, #8fd0ff, #3d7ff0 70%)' },
-  { key: 'list', label: 'List', icon: List, bg: 'radial-gradient(120% 90% at 50% 100%, #b6f0e4, #5fa9c9 70%)' },
-  { key: 'settings', label: 'Settings', icon: Settings, bg: 'radial-gradient(120% 90% at 50% 100%, #e3b8f0, #8a8ff0 70%)' },
+  { key: 'map', label: 'Map', icon: Map, bg: 'radial-gradient(ellipse at 50% 0%, #8fd0ff, #2f6fe0)' },
+  { key: 'list', label: 'List', icon: List, bg: 'radial-gradient(ellipse at 50% 0%, #b6f0e4, #3a9fbf)' },
+  { key: 'settings', label: 'Settings', icon: Settings, bg: 'radial-gradient(ellipse at 50% 0%, #e3b8f0, #7c7fe8)' },
 ]
 
 /** Black sidebar on a laptop, bottom tab bar on a phone. */
@@ -20,7 +20,7 @@ export function Sidebar({ view, onView, status, canScan, onScan }: {
 }) {
   return (
     <nav className="sidebar">
-      <img src="/logo.png" alt="Keepsake" className="hidden h-9 w-auto self-start md:block" />
+      <img src="/logo.png" alt="Keepsake" className="hidden h-9 w-auto self-center md:block" />
       <div className="grid flex-1 grid-cols-3 gap-2 md:mt-8 md:flex md:flex-none md:flex-col md:gap-2.5">
         {TABS.map(({ key, label, icon: Icon, bg }) => (
           <button
@@ -28,7 +28,7 @@ export function Sidebar({ view, onView, status, canScan, onScan }: {
             onClick={() => onView(key)}
             aria-current={view === key ? 'page' : undefined}
             className={`nav-tile press ${view === key ? 'on' : ''}`}
-            style={{ background: bg }}
+            style={view === key ? { background: bg } : undefined}
           >
             <Icon className="nav-glyph" strokeWidth={1.75} />
             <span className="nav-label">{label}</span>

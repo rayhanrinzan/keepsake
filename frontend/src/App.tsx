@@ -13,6 +13,7 @@ import { CameraPanel } from './components/CameraPanel'
 import { ActivityFeed } from './components/ActivityFeed'
 import { PrivacyPanel } from './components/PrivacyPanel'
 import { ScanFlow } from './components/ScanFlow'
+import { useCameraTrace } from './lib/trace'
 
 const POLL_MS = 1500
 
@@ -52,6 +53,7 @@ export default function App() {
   const [openId, setOpenId] = useState<string | null>(null)
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const [hoverId, setHoverId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [itemsOpen, setItemsOpen] = useState(() => window.innerWidth >= 768)
   const [scanning, setScanning] = useState(false)
   const [now, setNow] = useState(Date.now())
@@ -91,9 +93,9 @@ export default function App() {
     return () => clearTimeout(t)
   }, [highlightId])
 
-  /** A pin was clicked: light up its card under the map. */
+  /** A pin was clicked: light up its row in the items list. */
   function pickPin(id: string) {
-    setHighlightId(id)
+    setSelectedId(id)
     setItemsOpen(true)
     requestAnimationFrame(() => document.getElementById(`item-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
   }
@@ -119,6 +121,7 @@ export default function App() {
     api.regions().then(setRegions).catch(() => undefined)
   }, [])
 
+  const trace = useCameraTrace(view === 'map' && health?.camera === 'active')
   const open = objects.find((o) => o.object_id === openId)
   const seenCount = objects.filter((o) => o.seen).length
   const canScan = health != null && health.camera !== 'disabled' && health.mode === 'MONITORING'
@@ -136,7 +139,15 @@ export default function App() {
       {view === 'map' && (
         <main className="relative h-svh overflow-hidden">
           {/* The room fills the whole window; the title and items float over it on frosted glass. */}
-          <RoomBlueprint regions={regions} objects={objects} highlightId={hoverId ?? highlightId} onSelect={pickPin} />
+          <RoomBlueprint
+            regions={regions}
+            objects={objects}
+            highlightId={hoverId ?? selectedId ?? highlightId}
+            peekId={selectedId}
+            onSelect={pickPin}
+            onOpen={setOpenId}
+            trace={trace}
+          />
 
           <div className="frost absolute top-4 left-4 flex max-h-[calc(100%-6rem)] w-[min(340px,calc(100%-2rem))] flex-col sm:top-6 sm:left-6 md:max-h-[calc(100%-3rem)]">
             <div className="space-y-2 px-5 pt-4 pb-3">
@@ -164,7 +175,12 @@ export default function App() {
             </button>
             {itemsOpen && (
               <div className="no-scrollbar min-h-0 overflow-y-auto px-3 pb-3">
-                <ItemPanel objects={objects} activeId={hoverId ?? highlightId} onHover={setHoverId} onOpen={setOpenId} />
+                <ItemPanel
+                  objects={objects}
+                  activeId={hoverId ?? selectedId ?? highlightId}
+                  onHover={setHoverId}
+                  onPick={(id) => setSelectedId((cur) => (cur === id ? null : id))}
+                />
               </div>
             )}
           </div>

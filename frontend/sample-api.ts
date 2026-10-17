@@ -20,7 +20,12 @@ function objects() {
     seen: at != null, status: at == null ? 'never' : visible ? 'visible' : 'last_seen',
     region: at?.[2] ?? null, x: at?.[0] ?? null, y: at?.[1] ?? null, last_seen: at ? ago(at[3]) : null,
     visible, confidence: at ? 0.9 : null, moving: false, awaiting_reconfirmation: false, lost_while_moving: false,
-    snapshot: null, ...extra,
+    snapshot: at ? {
+      id: id.length, object_id: id, event_type: 'moved', timestamp: ago(at[3]), region: at[2],
+      bbox: [at[0] - 0.06, at[1] - 0.06, at[0] + 0.06, at[1] + 0.06], confidence: 0.9, view_id: 'sample',
+      image_url: `/api/sample-photo/${encodeURIComponent(name)}`,
+    } : null,
+    ...extra,
   })
   return [
     item('cell phone', 'Phone', 'phone', [0.2, 0.35, 'Bed', 0], true),
@@ -45,6 +50,13 @@ export function sampleApi(): Plugin {
     configureServer(server) {
       server.middlewares.use('/api', (req, res) => {
         const path = req.url ?? ''
+        // A labeled placeholder where the camera's photo would be.
+        if (path.startsWith('/sample-photo/')) {
+          const name = decodeURIComponent(path.slice('/sample-photo/'.length))
+          res.setHeader('Content-Type', 'image/svg+xml')
+          res.end(`<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#dbeeff"/><stop offset="1" stop-color="#8fbff5"/></linearGradient></defs><rect width="640" height="360" fill="url(#g)"/><text x="320" y="170" font-family="sans-serif" font-size="28" fill="#2f6fe0" text-anchor="middle">${name}</text><text x="320" y="205" font-family="sans-serif" font-size="16" fill="#2f6fe0" opacity="0.7" text-anchor="middle">sample photo</text></svg>`)
+          return
+        }
         const body = path.startsWith('/health') ? health
           : path.startsWith('/regions') ? regions
             : path.startsWith('/objects') && !path.includes('/snapshots') ? objects()

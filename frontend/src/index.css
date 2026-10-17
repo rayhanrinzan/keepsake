@@ -35,9 +35,18 @@ button, input, textarea { letter-spacing: inherit; }
 
 /* Sidebar: black with a straight edge on a laptop, a bottom tab bar on a phone. */
 .sidebar { @apply fixed inset-x-0 bottom-0 z-30 flex bg-sidebar p-2 text-white md:inset-y-0 md:right-auto md:w-60 md:flex-col md:px-4 md:py-6; }
-.nav-tile { @apply flex items-center justify-center gap-2 rounded-2xl px-3 py-2.5 text-white md:justify-start md:gap-3 md:px-4 md:py-3.5; opacity: 0.55; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.35), inset 0 -8px 18px rgb(255 255 255 / 0.12); transition-property: scale, opacity, box-shadow; }
-.nav-tile:hover { opacity: 0.8; }
-.nav-tile.on { opacity: 1; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), inset 0 -8px 18px rgb(255 255 255 / 0.18), 0 0 0 1.5px rgb(255 255 255 / 0.55); }
+/* Nav tiles – Apple-style: only the active pill gets a glassy oval highlight */
+.nav-tile { @apply relative flex items-center justify-center gap-2 rounded-full px-3 py-2.5 text-white md:justify-start md:gap-3 md:px-4 md:py-3; opacity: 0.5; background: transparent; transition: opacity 150ms ease-out, scale 150ms ease-out; }
+.nav-tile:hover { opacity: 0.75; }
+/* Active: glassy oval ONLY around this one item – gradient applied inline, glass sheen via shadow */
+.nav-tile.on {
+  opacity: 1;
+  /* background gradient set inline per-tab; CSS adds the glass polish only */
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.35),
+    inset 0 -1px 0 rgb(0 0 0 / 0.12),
+    0 2px 12px rgb(0 0 0 / 0.25);
+}
 .nav-label { @apply text-[13px] font-medium md:text-[15px]; }
 .nav-glyph { @apply size-5 shrink-0; }
 
@@ -56,6 +65,9 @@ button, input, textarea { letter-spacing: inherit; }
 .bubble { @apply flex w-full items-center gap-3 rounded-2xl p-1.5 pr-3 text-left hover:bg-sky/10; }
 .bubble.active { @apply bg-sky/15; }
 .bubble-photo { @apply flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full; background: radial-gradient(circle at 35% 30%, #ffffff, #cfe6ff 60%, #9fcdfc); }
+
+/* Photo card that pops up over a pin. */
+.peek { @apply absolute z-20 w-64 rounded-2xl bg-white/85 p-2 pb-3; transform: translate(-50%, calc(-100% - 18px)); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 0 0 1px rgb(255 255 255 / 0.9), 0 12px 32px rgb(30 60 120 / 0.16); }
 
 /* Blueprint map text. SVG text skips the page letter spacing so small labels stay legible. */
 .blueprint text { letter-spacing: normal; }
