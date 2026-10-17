@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { LoaderCircle, Mic, Search, Square } from 'lucide-react'
 import { api, ApiError } from '../lib/api'
-import type { QueryResult } from '../lib/api'
+import type { QueryResult, TrackedObject } from '../lib/api'
 import { listenOnce, speak, speechInputSupported, stopVoice, VoiceError } from '../lib/voice'
 
 /** Conversation: IDLE → PROMPTING → LISTENING → LOOKING_UP → RESPONDING → IDLE */
@@ -16,9 +16,24 @@ const PHASE_LABEL: Record<Phase, string> = {
 }
 
 const DECLINE = /^(no|nope|nah|nothing|i'?m (good|fine|ok(ay)?)|not really|no thanks?)\b/i
+// A bare "yes" names no item, so we ask which one. "Yes, my keys" goes straight to the lookup.
+const AFFIRM = /^(yes|yeah|yep|yup|ya|sure|i am|uh[- ]?huh|please|yes please|kind of|maybe)[.!]?$/i
 
-export function SearchPanel({ onResult, prompt }: {
+function joinList(names: string[], last: 'and' | 'or') {
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')}, ${last} ${names.at(-1)}`
+}
+
+/** "Okay, which item?" plus the items Keepsake has seen (or, if none yet, everything it tracks). */
+function whichItem(objects: TrackedObject[]) {
+  const seen = objects.filter((o) => o.seen).map((o) => o.name.toLowerCase())
+  if (seen.length) return `Okay, which item? I've seen your ${joinList(seen, 'and')}.`
+  const all = objects.map((o) => o.name.toLowerCase())
+  return all.length ? `Okay, which item? I can look for your ${joinList(all, 'or')}.` : 'Okay, which item?'
+}
+
+export function SearchPanel({ onResult, prompt, objects = [] }: {
   onResult: (r: QueryResult) => void
+  objects?: TrackedObject[]
   /** Ask unprompted (e.g. someone walked out of view). A new id starts a new conversation. */
   prompt?: { id: number; text: string } | null
 }) {
@@ -63,6 +78,35 @@ export function SearchPanel({ onResult, prompt }: {
     if (id === run.current) setPhase('IDLE')
   }
 
+  /** Say `question`, then listen for one reply. Null if the conversation ended (error/cancel). */
+  async function ask(question: string, id: number): Promise<string | null> {
+    setPhase('PROMPTING')
+    await speak(question) // the mic opens only after the prompt finishes
+    if (id !== run.current) return null
+    setPhase('LISTENING')
+    setHeard('')
+    try {
+      const said = await listenOnce(setHeard)
+      if (id !== run.current) return null
+      setHeard(said)
+      return said
+    } catch (e) {
+      if (id !== run.current) return null
+      const ve = e instanceof VoiceError ? e : new VoiceError('other', 'Voice input stopped unexpectedly.')
+      if (ve.code === 'aborted') return null
+      setError(ve.code === 'no-speech' ? "I didn't hear anything. Press Voice to try again." : ve.message)
+      setPhase('IDLE')
+      if (ve.code === 'no-speech') await speak("I didn't hear anything.")
+      return null
+    }
+  }
+
+  async function declined(id: number) {
+    setPhase('RESPONDING')
+    await speak('Okay.')
+    if (id === run.current) setPhase('IDLE')
+  }
+
   async function startVoice(question = 'What are you looking for?') {
     const id = ++run.current
     setError(null)
@@ -72,29 +116,15 @@ export function SearchPanel({ onResult, prompt }: {
       setError("Voice isn't available in this browser. Type instead, or use Chrome, Edge or Safari.")
       return
     }
-    setPhase('PROMPTING')
-    await speak(question) // the mic opens only after the prompt finishes
-    if (id !== run.current) return
-    setPhase('LISTENING')
-    let said: string
-    try {
-      said = await listenOnce(setHeard)
-    } catch (e) {
-      if (id !== run.current) return
-      const ve = e instanceof VoiceError ? e : new VoiceError('other', 'Voice input stopped unexpectedly.')
-      if (ve.code === 'aborted') return
-      setError(ve.code === 'no-speech' ? "I didn't hear anything. Press Voice to try again." : ve.message)
-      setPhase('IDLE')
-      if (ve.code === 'no-speech') await speak("I didn't hear anything.")
-      return
-    }
-    if (id !== run.current) return
-    setHeard(said)
-    if (DECLINE.test(said)) {
-      setPhase('RESPONDING')
-      await speak('Okay.')
-      if (id === run.current) setPhase('IDLE')
-      return
+    let said = await ask(question, id)
+    if (said === null) return
+    if (DECLINE.test(said)) return declined(id)
+    if (AFFIRM.test(said.trim())) {
+      const follow = whichItem(objects)
+      setAnswer(follow)
+      said = await ask(follow, id)
+      if (said === null) return
+      if (DECLINE.test(said)) return declined(id)
     }
     await lookUp(said, id, true)
   }

@@ -168,7 +168,7 @@ export default function App() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <main className="min-w-0 space-y-5">
-          <SearchPanel onResult={onAnswer} prompt={prompt} />
+          <SearchPanel onResult={onAnswer} prompt={prompt} objects={objects} />
 
           <div className="flex items-center justify-between gap-3">
             {/* Segmented control: inner radius 8 + padding 4 = outer 12 */}
