@@ -35,7 +35,7 @@ DEFAULT_CONF = "0.35" if _ITEMS_MODEL.exists() else "0.15"
 regions = load_regions()
 db = Database(env("DB_PATH", str(HERE / "data" / "ctrlf.db")))
 memory = SpatialMemory(db, regions, stability=int(env("STABILITY_FRAMES", "4")),
-                       min_confidence=float(env("CONFIDENCE", DEFAULT_CONF)),
+                       min_confidence=float(env("CONFIDENCE", "0.35")),  # fallback; per-item min_conf in catalog.py
                        absence_seconds=float(env("ABSENCE_SECONDS", "2.0")),
                        move_threshold=float(env("MOVE_THRESHOLD", "0.06")),
                        settle_seconds=float(env("SETTLE_SECONDS", "0.8")))
@@ -56,7 +56,8 @@ async def lifespan(_: FastAPI):
         worker = VisionWorker(memory, regions, snapshots, modes,
                               camera_index=int(source) if source.isdigit() else source,
                               model_path=env("MODEL", DEFAULT_MODEL),
-                              conf=float(env("CONFIDENCE", DEFAULT_CONF)),
+                              # candidate cutoff; each item then needs its own min_conf (catalog.py)
+                              conf=float(env("DETECT_CONFIDENCE", DEFAULT_CONF)),
                               fps=float(env("INFERENCE_FPS", "5")),
                               scan_model_path=env("SCAN_MODEL", str(HERE / "models" / ("yolo11m.pt" if (HERE / "models" / "yolo11m.pt").exists() else "yolo11n.pt"))),
                               frame_width=int(env("INFERENCE_WIDTH", "1280")),
@@ -287,6 +288,19 @@ def put_regions(body: RegionsIn):
 
 
 # ---------- live camera ----------
+
+@app.get("/api/camera/frame")
+def camera_frame():
+    """Newest annotated frame as a single JPEG (kept in memory only). The dashboard polls this;
+    short requests recover on their own where a long-lived MJPEG stream can stall in the browser."""
+    if worker is None:
+        raise HTTPException(503, "Camera disabled")
+    frame_id, jpg = worker.latest_frame()
+    if jpg is None:
+        raise HTTPException(503, "No frame yet")
+    return Response(jpg, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store", "X-Frame-Id": str(frame_id)})
+
 
 @app.get("/api/camera")
 async def camera():

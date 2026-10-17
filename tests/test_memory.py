@@ -10,9 +10,9 @@ from spatial import region_for_point
 
 def test_catalog_has_the_eight_objects_and_aliases():
     names = [c["name"] for c in CATALOG]
-    assert names == ["Phone", "Water Bottle", "Laptop", "Cup", "Book", "Backpack", "Remote", "Mouse"]
-    assert set(ALIASES) == {"cell phone", "bottle", "laptop", "cup", "book", "backpack", "remote",
-                            "mouse"}
+    assert names == ["Phone", "Water Bottle", "Keys", "Wallet", "AirPods", "Glasses", "Laptop", "Cup",
+                     "Book", "Backpack", "Remote", "Mouse"]
+    assert all(0.1 <= c["min_conf"] <= 0.9 for c in CATALOG)
     for c in CATALOG:
         assert parse_query(f"where is my {c['name'].lower()}")[0] == c["category"]
         for alias in c["aliases"]:
@@ -188,7 +188,7 @@ def test_camera_shift_suspension_drops_candidates(mem, clock, db):
 
 
 def test_query_answers_are_grounded(clock, db):
-    unknown = answer_query("Where are my keys?", db)
+    unknown = answer_query("Where is my umbrella?", db)
     assert unknown["found"] is False and "didn't catch" in unknown["answer"]
     assert answer_query("Where is my phone?", db)["answer"] == "I haven't seen your phone yet."
     clock.frames(6, obs(pos=DRESSER))
@@ -203,7 +203,7 @@ def test_query_parsing_prefers_longest_alias():
     assert parse_query("where is my computer mouse")[0] == "mouse"
     assert parse_query("where's my laptop")[0] == "laptop"
     assert parse_query("my notebook")[0] == "book"
-    assert parse_query("where are my keys") is None
+    assert parse_query("where is my umbrella") is None
 
 
 def test_settle_window_uses_time_not_just_frames(db, regions):
@@ -238,3 +238,12 @@ def test_no_areas_still_gives_honest_locations(db):
     Clock(m).frames(6, obs(pos=(0.1, 0.5)))
     assert db.get_by_category("bottle")["region"] == "Left side"
     assert "on the left side of the room" in answer_query("bottle", db, regions=[])["answer"]
+
+
+def test_per_item_confidence_thresholds(clock, db):
+    clock.frames(10, obs("glasses_case", conf=0.22))  # typical open-vocabulary false hit
+    assert db.get_by_category("glasses_case") is None
+    clock.frames(6, obs("keys", pos=(0.5, 0.5), conf=0.32, tid=3))
+    assert db.get_by_category("keys")["region"] == "Dresser"
+    assert parse_query("where are my airpods")[0] == "airpods"
+    assert parse_query("have you seen my wallet")[0] == "wallet"

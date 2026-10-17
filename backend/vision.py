@@ -16,6 +16,7 @@ import cv2
 import numpy as np
 
 from furniture import FURNITURE, propose_regions
+from catalog import MIN_CONF
 from memory import ALIASES, Observation, SpatialMemory, display_name
 from modes import MONITORING, ModeController
 from snapshots import SnapshotStore
@@ -99,6 +100,7 @@ class VisionWorker(threading.Thread):
         self._shift_frames = 0
         self._halt = threading.Event()
         self._jpeg: bytes | None = None
+        self._jpeg_id = 0
         self._jpeg_lock = threading.Lock()
         self.status = {"camera": "starting", "error": None, "warning": None, "fps": 0.0,
                        "device": self.device, "inference_width": frame_width,
@@ -108,6 +110,11 @@ class VisionWorker(threading.Thread):
     def latest_jpeg(self) -> bytes | None:
         with self._jpeg_lock:
             return self._jpeg
+
+    def latest_frame(self) -> tuple[int, bytes | None]:
+        """(frame number, annotated JPEG) of the newest processed frame."""
+        with self._jpeg_lock:
+            return self._jpeg_id, self._jpeg
 
     def stop(self) -> None:
         self._halt.set()
@@ -121,13 +128,22 @@ class VisionWorker(threading.Thread):
             if "world" in str(self.model_path).lower():  # open vocabulary: tell it what to look for
                 from catalog import CATALOG
                 prompts = [c.get("prompt", c["category"]) for c in CATALOG]
-                model.set_classes(prompts + [PERSON])
+                try:
+                    model.set_classes(prompts + [PERSON])
+                except ImportError as e:  # YOLO-World encodes the prompts with CLIP
+                    raise RuntimeError(
+                        "YOLO-World needs CLIP: run .venv/bin/pip install -r backend/requirements.txt") from e
                 self._label = {c.get("prompt", c["category"]): c["category"] for c in CATALOG}
         except Exception as e:  # noqa: BLE001
             log.exception("model load failed")
             self.status.update(camera="error", error=f"Model load failed: {e}")
             return
         class_ids = [i for i, n in model.names.items() if self._label.get(n, n) in ALIASES or n == PERSON]
+        seen_names = {self._label.get(n, n) for n in model.names.values()}
+        missing = [c for c in ALIASES if c not in seen_names]
+        if missing:  # e.g. a COCO-only model can't see keys or wallets
+            log.warning("detector %s can't detect: %s", self.model_path, ", ".join(missing))
+        self.status["undetectable"] = missing
 
         cap = None
         failures = 0
@@ -210,7 +226,8 @@ class VisionWorker(threading.Thread):
                 model.predictor = None
             self.status["error"] = f"Detection error: {e}"
             obs = []
-        self._publish(self._resize(frame, self.preview_width), [o for o in obs if o.category != PERSON])
+        shown = [o for o in obs if o.category in MIN_CONF and o.confidence >= MIN_CONF[o.category]]
+        self._publish(self._resize(frame, self.preview_width), shown)  # only what memory would accept
 
     def _scan(self, model, reference: np.ndarray) -> tuple[bytes | None, list[dict]]:
         """Scan room: detect furniture over the last few (steady) frames and propose areas."""
@@ -313,6 +330,7 @@ class VisionWorker(threading.Thread):
         if jpg:
             with self._jpeg_lock:
                 self._jpeg = jpg
+                self._jpeg_id = self._frame_id
         self.status["detections"] = [
             {"category": o.category, "name": display_name(o.category),
              "confidence": round(o.confidence, 2), "track_id": o.track_id} for o in obs]
