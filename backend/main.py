@@ -140,8 +140,11 @@ def object_view(item: dict, rec: dict | None, snap: dict | None, states: dict) -
                 "last_seen": None, "visible": False, "confidence": None, "moving": False,
                 "awaiting_reconfirmation": False, "lost_while_moving": False, "snapshot": None}
     awaiting = rec.get("view_id") not in (None, memory.view_id)
+    wearable = CAMERA_MODE == "wearable"
     return {**base, "status": "visible" if rec["visible"] else "last_seen",
-            "region": None if CAMERA_MODE == "wearable" else rec["region"], "x": rec["x"], "y": rec["y"], "last_seen": rec["last_seen"],
+            # A worn camera's screen position is where the wearer happened to look, not a room position.
+            "region": None if wearable else rec["region"], "x": None if wearable else rec["x"],
+            "y": None if wearable else rec["y"], "last_seen": rec["last_seen"],
             "visible": rec["visible"], "confidence": rec["confidence"],
             "moving": states.get(item["category"], "STABLE") != "STABLE",
             "awaiting_reconfirmation": awaiting, "lost_while_moving": rec["lost_while_moving"],

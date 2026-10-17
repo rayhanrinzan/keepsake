@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -38,7 +39,14 @@ def load_env_file(path: str | Path) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+        value = value.strip()
+        if value[:1] in ("'", '"') and value.count(value[0]) >= 2:
+            value = value[1:value.index(value[0], 1)]  # quoted: keep everything inside, even "#"
+        else:
+            value = "" if value.startswith("#") else re.split(r"\s+#", value, maxsplit=1)[0].strip()
+        if key.strip().startswith("export "):
+            key = key.strip()[len("export "):]
+        os.environ.setdefault(key.strip(), value)
 
 
 class GrokTTS:

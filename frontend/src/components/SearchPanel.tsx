@@ -168,7 +168,7 @@ export function SearchPanel({ onResult, prompt, objects = [] }: {
             id="ask"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Where is my phone?"
+            placeholder="Where are my keys?"
             className="h-12 w-full rounded-xl border border-hairline bg-canvas pr-3 pl-10 outline-none placeholder:text-faint focus:border-deep/50 focus:bg-surface"
           />
         </form>

@@ -293,3 +293,16 @@ def test_missing_files_are_not_null_entries_in_photo_history(combined):
     photo = w.main.db.get_snapshots('bottle_01')[0]
     w.main.snapshots.path_for(photo['filename']).unlink()
     assert w.client.get('/api/objects/bottle_01/snapshots').json() == []
+
+
+def test_wearable_objects_carry_no_room_position(combined):
+    """A worn camera's screen position is where the wearer looked; the Map must not pin it."""
+    w = combined
+    record(w, event(w))
+    w.main.db.upsert_object({'object_id': 'bottle_01', 'category': 'bottle', 'name': 'Water Bottle',
+                             'region': 'Couch', 'x': .4, 'y': .6, 'visible': False,
+                             'last_seen': T0.isoformat(), 'confidence': .9,
+                             'view_id': w.main.memory.view_id, 'lost_while_moving': False})
+    o = w.client.get('/api/objects/bottle').json()
+    assert o['seen'] and o['snapshot'] is not None
+    assert (o['region'], o['x'], o['y']) == (None, None, None)

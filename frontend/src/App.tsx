@@ -192,7 +192,12 @@ export default function App() {
                 {health?.sample && <p className="text-[13px] text-muted">Sample data for design work.</p>}
                 {offline && <p className="text-[13px] text-muted">Can&apos;t reach Keepsake. Start the backend to see updates.</p>}
                 {voiceBanner}
-                {regions.length === 0 && (
+                {health?.camera_mode === 'wearable' ? (
+                  <p className="text-[13px] text-muted">
+                    Worn camera: items aren&apos;t pinned on the map, because where you were looking isn&apos;t where
+                    they are. Each item shows its last photo and time instead.
+                  </p>
+                ) : regions.length === 0 && (
                   <p className="text-[13px] text-muted">No furniture yet. Scan the room so the map can draw it.</p>
                 )}
               </div>

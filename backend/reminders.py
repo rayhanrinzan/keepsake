@@ -83,7 +83,7 @@ DEFAULT_SETTINGS = {
     "enabled": False,        # nothing is queued until someone explicitly opts in
     "mode": "off",
     "opted_in_at": None,
-    "important": ["keys", "wallet", "phone"],  # names/aliases; resolved against the catalog
+    "important": ["keys", "wallet", "airpods", "glasses"],  # names/aliases, resolved via the catalog
     "overrides": {"high_assistance": {}, "everyday": {}},
     "paused_until": None,    # epoch seconds; float("inf") is stored as -1 (paused until resumed)
 }
