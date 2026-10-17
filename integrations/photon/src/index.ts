@@ -1,15 +1,14 @@
 import { Spectrum } from "spectrum-ts";
 import { imessage } from "@spectrum-ts/imessage";
 import { ConfigError, loadConfig } from "./config.ts";
-import { DepartureAlerts } from "./departures.ts";
 import { replyTo, SeenMessages } from "./inbound.ts";
-import { KeepsakeClient, resolveImportant } from "./keepsake.ts";
-import { AlertLedger } from "./ledger.ts";
+import { KeepsakeClient } from "./keepsake.ts";
 import { SpectrumIMessageNotifier } from "./notifier.ts";
+import { ReminderDelivery } from "./reminders.ts";
 
-// Keepsake Departure Alerts over Photon Spectrum (iMessage).
-// Keepsake's backend detects possible departures and owns object memory; this agent turns them
-// into reminders and answers "where is my …?" from authorized numbers.
+// Keepsake smart memory reminders over Photon Spectrum (iMessage).
+// Keepsake's backend owns memory and decides when a reminder is due (backend/reminders.py);
+// this agent delivers them to authorized numbers and handles their text replies.
 // Docs: https://photon.codes/docs/spectrum-ts
 
 try {
@@ -30,19 +29,6 @@ try {
 const mask = (id: string | undefined) => (id ? `…${id.slice(-4)}` : "unknown");
 
 const keepsake = new KeepsakeClient(config.keepsakeUrl);
-const ledger = new AlertLedger(config.stateFile);
-
-let important = { categories: [] as string[], unknown: [] as string[] };
-try {
-  important = resolveImportant(config.importantItems, await keepsake.catalog());
-} catch (err) {
-  console.error(`[photon] can't read the Keepsake catalog (${err instanceof Error ? err.message : err}).`);
-  console.error("[photon] start the Keepsake backend first: cd backend && ../.venv/bin/python main.py");
-  process.exit(1);
-}
-if (important.unknown.length) {
-  console.warn(`[photon] IMPORTANT_ITEMS not in Keepsake's catalog, ignored: ${important.unknown.join(", ")}`);
-}
 
 let app: Awaited<ReturnType<typeof Spectrum>>;
 try {
@@ -57,18 +43,21 @@ try {
 }
 
 const notifier = new SpectrumIMessageNotifier((to) => imessage(app).space.create(to));
-const alerts = new DepartureAlerts(keepsake, notifier, ledger, config, important.categories);
-alerts.start();
+const delivery = new ReminderDelivery(keepsake, notifier, config);
+delivery.start();
 
+const mode = await keepsake.reminderStatus().then(
+  (s) => `${s.settings.mode}${s.active ? "" : " (not opted in)"}${s.settings.paused ? ", paused" : ""}`,
+  () => "unknown (backend offline)",
+);
 console.log(
-  `[photon] connected to project …${config.projectId.slice(-4)}; alerts ${config.alertsEnabled ? "ON" : "OFF"}` +
-    `${ledger.paused ? " (paused by user)" : ""}, ${config.recipients.length} authorized recipient(s), ` +
-    `important items: ${important.categories.join(", ") || "none"}`,
+  `[photon] connected to project …${config.projectId.slice(-4)}; sending ${config.alertsEnabled ? "ON" : "OFF"}, ` +
+    `${config.recipients.length} authorized recipient(s); Keepsake reminder mode: ${mode}`,
 );
 
 const shutdown = async () => {
   console.log("[photon] shutting down");
-  alerts.stop();
+  delivery.stop();
   await app.stop().catch(() => {});
   process.exit(0);
 };
@@ -76,7 +65,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 const seen = new SeenMessages();
-const deps = { keepsake, ledger, recipients: config.recipients, enabled: config.alertsEnabled };
+const deps = { keepsake, recipients: config.recipients, enabled: config.alertsEnabled };
 
 for await (const [space, message] of app.messages) {
   try {
@@ -86,11 +75,12 @@ for await (const [space, message] of app.messages) {
       console.log(`[photon] ignored ${message.content.type} message from ${from}`);
       continue;
     }
-    const reply = await replyTo(message.sender?.id, message.content.text, deps);
-    if (reply === null) {
+    if (!config.recipients.includes(message.sender?.id ?? "")) {
       console.log(`[photon] ignored message from unauthorized sender ${from}`);
       continue;
     }
+    const reply = await replyTo(message.sender?.id, message.content.text, deps);
+    if (reply === null) continue; // e.g. "heading out": the reminder itself is the reply
     await space.send(reply);
     console.log(`[photon] replied to ${from}`);
   } catch (err) {

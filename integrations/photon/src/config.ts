@@ -4,17 +4,14 @@ export interface Config {
   projectId: string;
   projectSecret: string;
   keepsakeUrl: string;
-  /** Master switch: off by default; nothing about Keepsake memory leaves the machine until set. */
+  /**
+   * Photon-side master switch, off by default. Reminders also need the backend's own opt-in
+   * (mode high_assistance/everyday); both must be on before anything is sent.
+   */
   alertsEnabled: boolean;
-  /** E.164 numbers allowed to receive alerts and ask questions. */
+  /** E.164 numbers allowed to receive reminders and text commands. Kept only on this side. */
   recipients: string[];
-  /** Catalog categories, names or aliases ("keys", "wallet", "phone"). */
-  importantItems: string[];
-  maxObservationAgeMs: number;
-  cooldownMs: number;
-  maxEventAgeMs: number;
   pollMs: number;
-  stateFile: string;
 }
 
 export class ConfigError extends Error {}
@@ -67,22 +64,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new ConfigError("ALERTS_ENABLED is on but ALERT_RECIPIENTS is empty");
   }
 
-  const importantItems = (env.IMPORTANT_ITEMS || "keys,wallet,phone")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-
   return {
     projectId,
     projectSecret,
     keepsakeUrl,
     alertsEnabled,
     recipients,
-    importantItems,
-    maxObservationAgeMs: num(env, "ALERT_MAX_AGE_MINUTES", 180) * 60_000,
-    cooldownMs: num(env, "ALERT_COOLDOWN_MINUTES", 15) * 60_000,
-    maxEventAgeMs: num(env, "DEPARTURE_MAX_EVENT_AGE_SECONDS", 120) * 1000,
-    pollMs: num(env, "DEPARTURE_POLL_SECONDS", 2) * 1000,
-    stateFile: env.ALERT_STATE_FILE || new URL("../.data/state.json", import.meta.url).pathname,
+    pollMs: num(env, "REMINDER_POLL_SECONDS", 2) * 1000,
   };
 }

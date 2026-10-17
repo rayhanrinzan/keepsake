@@ -1,21 +1,5 @@
-// Thin client for the local Keepsake backend (backend/main.py). Keepsake's memory is the source of
-// truth: this never invents locations, it only reads what the backend has recorded.
-
-/** The canonical object shape from `object_view()` in backend/main.py. */
-export interface KeepsakeObject {
-  object_id: string;
-  category: string;
-  name: string;
-  seen: boolean;
-  status: "never" | "visible" | "last_seen";
-  region: string | null;
-  last_seen: string | null;
-  visible: boolean;
-  confidence: number | null;
-  moving: boolean;
-  awaiting_reconfirmation: boolean;
-  lost_while_moving: boolean;
-}
+// Thin client for the local Keepsake backend (backend/main.py). Keepsake's memory and its reminder
+// engine (backend/reminders.py) are the source of truth: this never invents locations or events.
 
 export interface CatalogItem {
   object_id: string;
@@ -24,31 +8,60 @@ export interface CatalogItem {
   aliases: string[];
 }
 
-export interface DepartureEvent {
-  id: number;
-  type: "possible_departure";
-  source: "tracked_person" | "manual";
-  at: string;
-  view_id: string | null;
-}
-
-export interface DepartureContext {
-  camera: string | null;
-  mode: string;
-  view_id: string;
-  /** Why the camera view can't be trusted right now (repositioning, shift…), or null. */
-  hold: string | null;
-  /** object_id → "on the couch" for every item with a last-seen area. */
-  places: Record<string, string>;
-}
-
 export interface QueryAnswer {
   found: boolean;
   answer: string;
-  object: KeepsakeObject | null;
+}
+
+export type Mode = "off" | "high_assistance" | "everyday";
+
+export interface ReminderItem {
+  object_id: string;
+  name: string;
+  /** Last time Keepsake saw it (ISO-8601). */
+  last_seen: string;
+  /** When its newest stored photo was taken; the photo itself stays local. */
+  photo_at: string | null;
+  snapshot_id: number | null;
+  /** A location phrase only when the memory supports it (stationary camera); else null. */
+  place: string | null;
+  evidence: string;
+}
+
+export interface ReminderAlert {
+  id: number;
+  created_at: string;
+  /** automatic (policy decided) | manual (developer trigger) | heading_out (user asked) */
+  trigger: "automatic" | "manual" | "heading_out";
+  mode: Exclude<Mode, "off">;
+  tone: "gentle" | "heading_out";
+  status: string;
+  attempts: number;
+  items: ReminderItem[];
+}
+
+export interface CheckResult {
+  queued: boolean;
+  blocked?: string;
+  alert?: ReminderAlert;
+  skipped: { object_id: string; reason: string }[];
+}
+
+export interface ReminderStatus {
+  active: boolean;
+  settings: { mode: Mode; enabled: boolean; paused: boolean; important: string[]; camera_mode: string };
 }
 
 export class KeepsakeUnavailable extends Error {}
+
+/** The backend answered with a 4xx: the request was understood and refused. */
+export class KeepsakeRefused extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
+const LOCAL = { "X-Keepsake-Local": "1" };
 
 export class KeepsakeClient {
   constructor(
@@ -60,14 +73,20 @@ export class KeepsakeClient {
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     let res: Response;
     try {
-      res = await this.fetchImpl(this.baseUrl + path, {
-        ...init,
-        signal: AbortSignal.timeout(this.timeoutMs),
-      });
+      res = await this.fetchImpl(this.baseUrl + path, { ...init, signal: AbortSignal.timeout(this.timeoutMs) });
     } catch (err) {
       throw new KeepsakeUnavailable(
         `Keepsake backend unreachable at ${this.baseUrl} (${err instanceof Error ? err.name : "error"})`,
       );
+    }
+    if (res.status >= 400 && res.status < 500) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        detail = ((await res.json()) as { detail?: string }).detail ?? detail;
+      } catch {
+        // keep the status
+      }
+      throw new KeepsakeRefused(res.status, `Keepsake ${path}: ${detail}`);
     }
     if (!res.ok) throw new KeepsakeUnavailable(`Keepsake ${path} returned HTTP ${res.status}`);
     try {
@@ -77,20 +96,21 @@ export class KeepsakeClient {
     }
   }
 
+  /** Writes need the local-only header (it forces a CORS preflight for web pages). */
+  private write<T>(method: "POST" | "PUT", path: string, body?: unknown) {
+    return this.request<T>(path, {
+      method,
+      headers: { ...LOCAL, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  }
+
   health() {
-    return this.request<{ status: string; camera: string; mode?: string }>("/api/health");
+    return this.request<{ status: string; camera: string }>("/api/health");
   }
 
   catalog() {
     return this.request<CatalogItem[]>("/api/catalog");
-  }
-
-  objects() {
-    return this.request<KeepsakeObject[]>("/api/objects");
-  }
-
-  object(idOrName: string) {
-    return this.request<KeepsakeObject>(`/api/objects/${encodeURIComponent(idOrName)}`);
   }
 
   query(text: string) {
@@ -101,41 +121,31 @@ export class KeepsakeClient {
     });
   }
 
-  departures(after: number) {
-    return this.request<{ events: DepartureEvent[]; latest_id: number }>(
-      `/api/departures?after=${after}`,
-    );
+  reminderStatus() {
+    return this.request<ReminderStatus>("/api/reminders/settings");
   }
 
-  departureContext() {
-    return this.request<DepartureContext>("/api/departures/context");
+  setReminders(changes: { mode?: Mode; enabled?: boolean; opt_in?: boolean }) {
+    return this.write<ReminderStatus>("PUT", "/api/reminders/settings", changes);
   }
 
-  simulateDeparture() {
-    return this.request<DepartureEvent>("/api/departures/simulate", {
-      method: "POST",
-      headers: { "X-Keepsake-Local": "1" },
-    });
+  queuedAlerts() {
+    return this.request<ReminderAlert[]>("/api/reminders/alerts?status=queued");
   }
-}
 
-/** Resolve configured names/aliases ("phone") to catalog categories ("cell phone"). */
-export function resolveImportant(
-  wanted: string[],
-  catalog: CatalogItem[],
-): { categories: string[]; unknown: string[] } {
-  const categories: string[] = [];
-  const unknown: string[] = [];
-  for (const w of wanted) {
-    const hit = catalog.find(
-      (c) =>
-        c.category.toLowerCase() === w ||
-        c.name.toLowerCase() === w ||
-        c.object_id.toLowerCase() === w ||
-        c.aliases.some((a) => a.toLowerCase() === w),
-    );
-    if (hit && !categories.includes(hit.category)) categories.push(hit.category);
-    else if (!hit) unknown.push(w);
+  claim(id: number) {
+    return this.write<ReminderAlert>("POST", `/api/reminders/alerts/${id}/claim`);
   }
-  return { categories, unknown };
+
+  report(id: number, status: "accepted" | "failed", error?: string) {
+    return this.write<ReminderAlert>("POST", `/api/reminders/alerts/${id}/result`, { status, error });
+  }
+
+  check(reason: "manual" | "heading_out") {
+    return this.write<CheckResult>("POST", "/api/reminders/check", { reason });
+  }
+
+  acknowledge(action: "have_it" | "snooze" | "pause" | "resume") {
+    return this.write<{ ok: boolean; why?: string; paused?: boolean }>("POST", "/api/reminders/ack", { action });
+  }
 }

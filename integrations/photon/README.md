@@ -1,102 +1,123 @@
-# Keepsake Departure Alerts (Photon Spectrum)
+# Keepsake smart memory reminders (Photon Spectrum)
 
-When someone appears to leave the room, Keepsake checks where it last saw your important items and
-sends an iMessage reminder through [Photon Spectrum](https://photon.codes/docs/spectrum-ts):
+Keepsake can text you a gentle reminder about belongings it recently saw you with:
 
-> Heads up: your keys were last seen on the couch at 10:32 AM. Looks like you might be heading out. Did you bring them?
+> Keepsake reminder: Your wallet was last seen at 2:34 PM. Check whether you have it. The last photo is in Keepsake.
 
-Keepsake can't see into pockets or know that you actually left, so reminders are suggestions based
-on the last observation, never claims that something was forgotten.
+Reminders go out through [Photon Spectrum](https://photon.codes/docs/spectrum-ts) iMessage. They're
+built only from what Keepsake actually recorded: a real photo and the time of the last sighting.
+A wearable camera can't see pockets or bags, so a reminder never says you forgot something.
+
+This is a hackathon prototype for memory support. It is **not** a clinically validated assistive
+or monitoring device, and reminders are not emergency or medical alerts.
 
 ```
-backend (Python)                                     integrations/photon (TypeScript)
-tracked person ─► departure.py   ─► GET /api/departures ◄─ poll ─ departures.ts
-                                      GET /api/objects, /context ──► alerts.ts (eligibility)
-                                                                  ─► notifier.ts ─► Photon ─► iMessage
-                                      POST /api/query ◄── inbound.ts ◄── replies from your phone
+backend (Python)                                        integrations/photon (TypeScript)
+snapshot rows (real photos) ─┐
+hand events (EVENTS.md) ─────┼─► reminders.py policy ─► GET /api/reminders/alerts ◄─ poll ─ reminders.ts
+tracked departure (fixed cam)┘   (state per item)       claim → send → result ───────────► Photon ─► iMessage
+                                                        /ack, /check, /settings ◄── inbound.ts ◄── your replies
 ```
 
-The backend only reports possible departures; it never makes network calls, so Keepsake keeps
-working when the agent or Photon is offline. The agent never reads the SQLite database directly.
+The backend decides *whether* to remind. It makes no network calls and runs on its own thread, so
+Keepsake works normally when the agent or Photon is offline. The agent only checks its recipient
+allowlist, formats and sends the text, and reports `accepted` or `failed`. **`accepted` means
+Spectrum took the send request, not that the phone received it.** Photos never leave the Mac.
+
+## Modes
+
+One policy engine with two presets. `off` is the default.
+
+| | High-Assistance | Everyday |
+|---|---|---|
+| For | People who choose frequent memory support | Fewer, higher-confidence reminders |
+| Triggers | Confirmed placement; hand-near-then-stable; or a stable photo-backed sighting (cautious wording) | Confirmed placement (confidence ≥ 0.6), or an explicit "heading out" check |
+| Delay | 15 s out of view | 150 s out of view |
+| Per-item cooldown | 5 min | 30 min |
+| Global cooldown | 60 s | 10 min |
+| Wording | "Keepsake reminder: … Check whether you have it." | "Heading out? … Check whether you have it." |
+
+Both modes:
+- **One reminder per placement.** Seeing the same item again doesn't restart its timer.
+- **Batching:** several due items go out in one message.
+- **Snooze** gives one more reminder later.
+- **Cancellation:** a pending reminder is dropped on any of these:
+  - a confident pickup (≥ 0.6)
+  - a newer placement
+  - "I have it"
+  - a mode change or pause
+  - the camera disconnecting or going dark
+  - Scan room
+  - the item being lost while moving
+  - a missing or stale photo
+  - cooldown or age
+
+**Separation** is what makes a reminder due:
+- **Wearable** (default `camera_mode`): the item has been out of the wearer's view for the delay.
+  This is a weak signal. It means the camera turned away, not that the item stayed behind.
+- **Stationary camera:** a tracked person left the view after the placement. Only in this mode do
+  reminders name an area such as "on the bed", because only then do Keepsake's room areas mean anything.
+- **Either:** an explicit "heading out" text or the manual check.
 
 ## Run
 
 ```sh
-# 1. Keepsake backend, from Terminal.app (camera permission is per app)
-cd backend && ../.venv/bin/python main.py
-
-# 2. The agent (needs the backend running)
+cd backend && ../.venv/bin/python main.py          # Keepsake backend (from Terminal.app)
 cd integrations/photon && npm install && npm run start
 ```
 
-Startup prints whether alerts are ON, how many recipients are authorized and which items are watched.
+## Turn reminders on (explicit opt-in)
 
-## Configure (`.env`, git-ignored; see `.env.example`)
+Both sides have to be on:
 
-| Variable | Default | |
-|---|---|---|
-| `PROJECT_ID`, `PROJECT_SECRET` | | Spectrum project credentials (written by `create-spectrum-project`) |
-| `ALERTS_ENABLED` | `false` | Master switch. Nothing from Keepsake memory is sent until it's `true` |
-| `ALERT_RECIPIENTS` | | Comma-separated E.164 numbers. On Free/Pro each must be a project user: `photon spectrum users add` |
-| `IMPORTANT_ITEMS` | `keys,wallet,phone` | Catalog categories, names or aliases (`/api/catalog`); any tracked item works for demos |
-| `ALERT_MAX_AGE_MINUTES` | `180` | Ignore observations older than this |
-| `ALERT_COOLDOWN_MINUTES` | `15` | Don't mention the same item again sooner |
-| `DEPARTURE_MAX_EVENT_AGE_SECONDS` | `120` | Ignore stale departure events |
-
-An item is included only if it has a real recorded location in the current camera view, is recent
-enough, isn't moving or "lost while moving", and isn't in cooldown. No alert is sent while the camera
-is repositioning, scanning, shifted or dark. Several items are combined into one message; each
-departure is handled once and failed sends are not retried. `.data/state.json` keeps handled event
-ids, per-item cooldowns and the pause flag (no phone numbers or message text).
-
-## Automatic departures
-
-Departure Alerts follows **one person**, so it works with a crowd in view. The vision worker's
-`PresenceTracker` is given a `DeparturePresence` (backend/departure.py) that also runs a
-`TargetTracker`:
-
-- **Lock on:** the largest person box (usually the closest), seen 3 frames in a row.
-- **Follow:** by ByteTrack id; if the id changes after an occlusion, a *new* box at the same spot
-  takes over. People already in view beside the target never do.
-- **Departure:** the target unseen for 3 s. Everyone else coming and going is ignored. Afterwards
-  it locks onto the next closest person.
-
-The app's own "Are you looking for something?" presence prompt is unchanged. There is no face or
-identity recognition. Departures are dropped while the view can't be trusted: Scan room, a camera
-shift (10 s), dark frames or a camera error. Watch it live:
+1. **Photon side** (`integrations/photon/.env`, git-ignored): `ALERTS_ENABLED=true`, plus
+   `ALERT_RECIPIENTS=+1…` (E.164; on Free/Pro also a project user via `photon spectrum users add`).
+2. **Keepsake side:** from an authorized phone, text **"high assistance"** or **"everyday"**. Or locally:
 
 ```sh
-curl http://127.0.0.1:8000/api/departures/context   # target box, people tracked, hold, suppressed
+curl -X PUT http://127.0.0.1:8000/api/reminders/settings -H 'X-Keepsake-Local: 1' \
+  -H 'Content-Type: application/json' \
+  -d '{"mode": "high_assistance", "enabled": true, "opt_in": true, "important": ["wallet", "bottle", "keys"]}'
 ```
 
-## Manual test
+Settings persist in Keepsake's database. Other fields: `camera_mode` (`wearable` | `stationary`) and
+`overrides` (per mode: `delay`, `min_confidence`, `per_item_cooldown`, `global_cooldown`,
+`max_photo_age`, `max_pending`, `pickup_cancel_conf`, `snooze`). Inspect everything, including each
+item's state and recent decisions, with `GET /api/reminders/settings`.
 
-With the backend and agent running:
+## Text commands (authorized numbers only)
+
+| Text | Effect |
+|---|---|
+| "high assistance" / "everyday" / "reminders off" | Choose a mode (texting a mode is the opt-in) |
+| "I have it" | Dismiss the latest reminder |
+| "remind me later" | One more reminder after the snooze time |
+| "pause reminders" / "resume reminders" | Pause and resume |
+| "heading out" | Check now against the selected mode's rules |
+| "where are my keys?" | Keepsake's own answer from `/api/query` |
+
+## Manual test (P0)
+
+With both processes running, real memories in Keepsake (point the camera at a wallet or bottle),
+and a mode turned on:
 
 ```sh
-npm run trigger:departure
+npm run reminder:check               # labelled "manual" everywhere
+npm run reminder:check heading_out   # same as texting "heading out"
 ```
 
-This records a simulated departure (local only: needs the `X-Keepsake-Local` header). The agent then
-evaluates the real stored memories and either sends a real iMessage or logs why it didn't
-(`no_eligible_items`, `camera_repositioning`, …).
+This never injects a placement or a detection. The engine evaluates the real stored memory and
+either queues a reminder, which the agent then sends, or prints why each item was skipped.
 
-## Text the agent
+## Hand-interaction events
 
-From an authorized number, text the project's assigned number (`photon spectrum users list --json`
-→ `assignedPhoneNumber`):
-
-- "Where are my keys?": Keepsake's own answer from `/api/query`
-- "Pause reminders" / "Resume reminders"
-- "I have them"
-- "Hello Photon": connectivity check
-
-Messages from other numbers are ignored.
+See [EVENTS.md](EVENTS.md) for the contract. Hand tracking (issue #5) isn't merged yet, so
+automatic reminders currently rely on memory's own photo-backed sightings, with the cautious
+High-Assistance wording.
 
 ## Test
 
 ```sh
-npm test            # alert rules, client, service, inbound (mocked network)
-npm run typecheck
-../../.venv/bin/python -m pytest ../../tests/test_departure.py   # detector + endpoints
+npm test && npm run typecheck                                          # agent (mocked network)
+../../.venv/bin/python -m pytest ../../tests/test_reminders.py         # policy engine + API
 ```
