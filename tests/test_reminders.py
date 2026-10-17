@@ -111,10 +111,10 @@ def test_reminders_are_off_by_default_and_need_explicit_opt_in(db):
 
 def test_settings_persist_and_validate(db):
     w = World(db)
-    w.engine.update_settings({"important": ["phone", "Keys"],
+    w.engine.update_settings({"important": ["bottle", "Keys"],
                               "overrides": {"high_assistance": {"delay": 20}}})
     again = ReminderEngine(db, clock=w.clock)
-    assert again.settings["important"] == ["cell phone", "keys"]
+    assert again.important() == ["bottle_01", "car_key_01"]
     assert again.policy()["delay"] == 20 and again.active()
     for bad in [{"mode": "loud"}, {"important": ["umbrella"]}, {"camera_mode": "drone"},
                 {"overrides": {"everyday": {"tone": 1}}}, {"overrides": {"everyday": {"delay": -5}}}]:
@@ -189,13 +189,13 @@ def test_new_placement_after_reminder_still_respects_item_cooldown(w):
 
 def test_multiple_items_are_combined_into_one_reminder(w):
     w.sight("wallet")
-    w.sight("keys")
+    w.sight("car key")
     w.run(1)
     w.hide("wallet")
-    w.hide("keys")
+    w.hide("car key")
     w.run(20)
     assert len(w.alerts) == 1
-    assert sorted(i["object_id"] for i in w.alerts[0]["items"]) == ["keys_01", "wallet_01"]
+    assert sorted(i["object_id"] for i in w.alerts[0]["items"]) == ["car_key_01", "wallet_01"]
 
 
 def test_global_cooldown_holds_the_next_reminder(w):
@@ -204,13 +204,13 @@ def test_global_cooldown_holds_the_next_reminder(w):
     w.hide("wallet")
     w.run(20)
     w.deliver(w.alerts[0])
-    w.sight("keys")
+    w.sight("car key")
     w.run(1)
-    w.hide("keys")
+    w.hide("car key")
     w.run(20)
     assert len(w.alerts) == 1  # 60 s global cooldown
     w.run(40)
-    assert len(w.alerts) == 2 and w.alerts[1]["items"][0]["object_id"] == "keys_01"
+    assert len(w.alerts) == 2 and w.alerts[1]["items"][0]["object_id"] == "car_key_01"
 
 
 def test_unwatched_items_are_ignored(w):
@@ -322,7 +322,7 @@ def test_placement_without_a_photo_waits_then_is_dropped(w):
 
 
 def test_snapshot_id_of_another_object_is_not_accepted(w):
-    other = w.sight("keys")
+    other = w.sight("car key")
     w.sight("wallet", photo=False)
     w.engine._snapshot_cursor = 10**9  # ignore the memory feed for this test
     assert w.event("placement_confirmed", "p1", snapshot_id=other)["result"] == "candidate"
@@ -502,9 +502,9 @@ def test_agent_offline_expires_queued_alert_and_unknown_is_never_resent(w):
     w.run(130, step=10)
     assert w.engine.alerts("expired")[0]["reason"] == "agent offline"
     assert w.state().reason == "delivery_unavailable"
-    w.sight("keys")
+    w.sight("car key")
     w.run(1)
-    w.hide("keys")
+    w.hide("car key")
     w.run(80)
     b = w.alerts[-1]
     w.engine.claim(b["id"])
@@ -524,8 +524,7 @@ def test_manual_check_uses_real_memory_and_is_labelled(w):
     assert r["queued"] and r["alert"]["trigger"] == "manual"
     item = r["alert"]["items"][0]
     assert item["object_id"] == "wallet_01" and item["evidence"] in ("object_observed", "stored_observation")
-    assert {s["object_id"]: s["reason"] for s in r["skipped"]} == {"keys_01": "no_memory",
-                                                                    "cell_phone_01": "no_memory"}
+    assert {s["object_id"]: s["reason"] for s in r["skipped"]} == {"car_key_01": "no_memory"}
     assert w.engine.check("manual")["skipped"][0]["reason"] in ("already_queued", "no_memory")
 
 
@@ -534,7 +533,7 @@ def test_check_respects_off_pause_and_missing_photos(db):
     assert w.engine.check()["blocked"] == "reminders_off"
     w.engine.update_settings({"mode": "everyday", "enabled": True}, opt_in=True)
     w.sight(photo=False)
-    assert w.engine.check("heading_out")["skipped"][0] == {"object_id": "keys_01", "reason": "no_memory"}
+    assert w.engine.check("heading_out")["skipped"][0] == {"object_id": "car_key_01", "reason": "no_memory"}
     assert {"object_id": "wallet_01", "reason": "no_photo"} in w.engine.check("heading_out")["skipped"]
     w.engine.pause()
     assert w.engine.check()["blocked"] == "paused"
@@ -566,7 +565,7 @@ def test_reminder_api_opt_in_events_check_and_delivery(api):
                  json={"mode": "high_assistance", "enabled": True}).status_code == 409  # no opt-in
     s = c.put("/api/reminders/settings", headers=LOCAL,
               json={"mode": "high_assistance", "enabled": True, "opt_in": True}).json()
-    assert s["active"] and s["settings"]["important"] == ["keys", "wallet", "cell phone"]
+    assert s["active"] and s["settings"]["important"] == ["keys", "wallet", "phone"]
     assert c.post("/api/reminders/events", json={}).status_code == 403
     assert c.post("/api/reminders/events", headers=LOCAL, json={"event_type": "x"}).status_code == 422
     r = c.post("/api/reminders/events", headers=LOCAL, json={

@@ -83,7 +83,7 @@ DEFAULT_SETTINGS = {
     "mode": "off",
     "opted_in_at": None,
     "camera_mode": "wearable",
-    "important": ["keys", "wallet", "cell phone"],
+    "important": ["keys", "wallet", "phone"],  # names/aliases; resolved against the catalog
     "overrides": {"high_assistance": {}, "everyday": {}},
     "paused_until": None,    # epoch seconds; float("inf") is stored as -1 (paused until resumed)
 }
@@ -206,7 +206,7 @@ class ReminderEngine:
                     oid = self._resolve(name)
                     if oid is None:
                         raise ValueError(f"Keepsake doesn't track {name!r}")
-                    important.append(self.items[oid]["category"])
+                    important.append(self.items[oid]["name"].lower())
                 new["important"] = list(dict.fromkeys(important))
             for mode, vals in (changes.get("overrides") or {}).items():
                 if mode not in PRESETS:
@@ -230,6 +230,16 @@ class ReminderEngine:
             if mode_changed or camera_changed:
                 self._cancel_all("mode_changed" if mode_changed else "camera_mode_changed")
             return self.status()
+
+    def important(self) -> list[str]:
+        """Watched object_ids. Entries are catalog names/aliases, so catalog edits can't break them;
+        anything the catalog no longer tracks is skipped."""
+        out = []
+        for name in self.settings["important"]:
+            oid = self._resolve(name)
+            if oid and oid not in out:
+                out.append(oid)
+        return out
 
     def active(self) -> bool:
         return bool(self.settings["enabled"]) and self.settings["mode"] in PRESETS
@@ -314,9 +324,8 @@ class ReminderEngine:
         if self._duplicate(ev["event_id"]):
             return {"result": "duplicate"}
         o = self._objs[ev["object_id"]]
-        category = self.items[ev["object_id"]]["category"]
         etype, policy = ev["event_type"], self.policy()
-        watched = self.active() and category in self.settings["important"] and not self.paused(now)
+        watched = self.active() and ev["object_id"] in self.important() and not self.paused(now)
 
         if etype == "interaction_candidate":
             o.interaction_at = ev["t"]
@@ -547,8 +556,8 @@ class ReminderEngine:
             status = self.status_fn() or {}
             hold = hold_reason(self.modes, self.memory, status, now=now) if self.modes else None
             picked, skipped = [], []
-            for category in self.settings["important"]:
-                oid = self.by_category[category]
+            for oid in self.important():
+                category = self.items[oid]["category"]
                 o, rec = self._objs[oid], self._object(oid)
                 photo = self._photo(o, rec)
                 tmp = _Obj(oid)
@@ -709,8 +718,7 @@ class ReminderEngine:
                                  "paused": self.paused(now)},
                     "policy": self.policy(), "active": self.active(),
                     "objects": {oid: o.view() for oid, o in self._objs.items()
-                                if self.items[oid]["category"] in self.settings["important"]
-                                or o.state != IDLE},
+                                if oid in self.important() or o.state != IDLE},
                     "recent": list(self.log)[-20:]}
 
     def start(self, interval: float = 1.0) -> None:
