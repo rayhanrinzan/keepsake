@@ -4,7 +4,7 @@ export type Mode = 'MONITORING' | 'REPOSITIONING' | 'CALIBRATING' | 'READY_TO_RE
 export interface Snapshot {
   id: number
   object_id: string
-  event_type: 'first_seen' | 'moved' | 'moved_within' | 'reconfirmed'
+  event_type: 'first_seen' | 'moved' | 'moved_within' | 'reconfirmed' | 'object_observed' | 'placement_confirmed'
   timestamp: string
   region: string
   bbox: [number, number, number, number]

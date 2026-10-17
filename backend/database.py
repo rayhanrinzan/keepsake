@@ -4,6 +4,7 @@ Snapshot *images* live on disk (see snapshots.py); SQLite stores only their meta
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -41,6 +42,16 @@ CREATE TABLE IF NOT EXISTS snapshots (
     view_id     TEXT
 );
 CREATE INDEX IF NOT EXISTS snapshots_object ON snapshots (object_id, id);
+CREATE TABLE IF NOT EXISTS observations (
+    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id    TEXT NOT NULL UNIQUE,
+    event_type  TEXT NOT NULL,
+    object_id   TEXT NOT NULL,
+    timestamp   TEXT NOT NULL,
+    snapshot_id INTEGER,
+    payload     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS observations_object ON observations (object_id, seq);
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -177,6 +188,40 @@ class Database:
         with self._lock:
             return [r["filename"] for r in self._conn.execute("SELECT filename FROM snapshots")]
 
+    # ---- wearable observation events (contract in events.py) ----
+    def add_observation(self, event: dict) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO observations (event_id, event_type, object_id, timestamp, snapshot_id, "
+                "payload) VALUES (?, ?, ?, ?, ?, ?)",
+                (event["event_id"], event["event_type"], event["object_id"], event["timestamp"],
+                 event.get("snapshot_id"), json.dumps(event)))
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def set_observation_snapshot(self, event_id: str, snapshot_id: int) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE observations SET snapshot_id = ? WHERE event_id = ?",
+                               (snapshot_id, event_id))
+            self._conn.commit()
+
+    def get_observations(self, limit: int = 50, after_seq: int = 0, event_type: str | None = None,
+                         object_id: str | None = None) -> list[dict]:
+        """Newest first. `seq` is a cursor: pass the largest seq you have as after_seq to poll."""
+        sql, args = "SELECT * FROM observations WHERE seq > ?", [after_seq]
+        if event_type:
+            sql, args = sql + " AND event_type = ?", args + [event_type]
+        if object_id:
+            sql, args = sql + " AND object_id = ?", args + [object_id]
+        with self._lock:
+            rows = self._conn.execute(sql + " ORDER BY seq DESC LIMIT ?", args + [limit]).fetchall()
+        out = []
+        for r in rows:
+            ev = json.loads(r["payload"])
+            ev.update(seq=r["seq"], snapshot_id=r["snapshot_id"])
+            out.append(ev)
+        return out
+
     # ---- settings ----
     def get_setting(self, key: str, default: str | None = None) -> str | None:
         with self._lock:
@@ -191,9 +236,9 @@ class Database:
 
     # ---- lifecycle ----
     def clear(self) -> None:
-        """Forget objects, events and snapshot rows (settings such as the camera view are kept)."""
+        """Forget objects, events, observations and snapshot rows (settings such as the camera view are kept)."""
         with self._lock:
-            for table in ("objects", "events", "snapshots"):
+            for table in ("objects", "events", "snapshots", "observations"):
                 self._conn.execute(f"DELETE FROM {table}")
             self._conn.commit()
 
