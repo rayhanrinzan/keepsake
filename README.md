@@ -85,7 +85,7 @@ For Continuity Camera, keep the iPhone locked and still, with its **back** camer
   3. Rename, adjust, delete or add areas, then press **Save and resume**.
 
   Old photos and locations are kept and marked "Not rechecked since scan". When an item is seen again it's **reconfirmed**: you get a fresh photo, but it isn't logged as a move. If the whole view shifts unexpectedly, Keepsake briefly stops updating and suggests scanning again.
-- **Settings → Customize voice** (gear icon, top right): pick the **Grok voice** (xAI text to speech: Eve, Ara, Rex, Sal, Leo or any voice your account lists) or the browser's built-in voice, set the speed (0.7–1.5×), and press **Preview**. Grok needs `XAI_API_KEY` (an `xai-…` key from [console.x.ai](https://console.x.ai)) in the repo's `.env`; restart the backend after adding it. If Grok fails, Keepsake falls back to the browser voice.
+- **Settings → Customize voice** (Settings in the sidebar, then the Customize voice button): pick the **Grok voice** (xAI text to speech: Eve, Ara, Rex, Sal, Leo or any voice your account lists) or the browser's built-in voice, set the speed (0.7–1.5×), and press **Preview**. Grok needs `XAI_API_KEY` (an `xai-…` key from [console.x.ai](https://console.x.ai)) in the repo's `.env`; restart the backend after adding it. `.env` is git-ignored, so **each teammate needs the key in their own `.env`** (share it privately, never in git); without it the app silently uses the browser voice. If Grok fails, Keepsake falls back to the browser voice. `GET /api/voice` shows `grok_available`.
 - **Privacy panel:** pause photo saving (locations still update), or clear all memories and photos.
 
 ## Configuration
