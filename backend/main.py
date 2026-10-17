@@ -53,7 +53,9 @@ async def lifespan(_: FastAPI):
                               model_path=env("MODEL", str(HERE / "models" / "yolo11n.pt")),
                               conf=float(env("CONFIDENCE", "0.4")),
                               fps=float(env("INFERENCE_FPS", "5")),
-                              scan_model_path=env("SCAN_MODEL", str(HERE / "models" / "yolo11m.pt")))
+                              scan_model_path=env("SCAN_MODEL", str(HERE / "models" / "yolo11m.pt")),
+                              frame_width=int(env("INFERENCE_WIDTH", "1280")),
+                              device=env("DEVICE", "") or None)
         worker.start()
     yield
     if worker:

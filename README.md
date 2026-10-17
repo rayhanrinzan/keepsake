@@ -20,7 +20,7 @@ camera ─► OpenCV ─► YOLO11n + ByteTrack ─► area (from Scan room: Bed
      React app (List · Map · Voice · Reposition) ◄── FastAPI on 127.0.0.1:8000
 ```
 
-- **Detection:** pretrained Ultralytics YOLO11n (COCO classes) on the CPU at about 5 fps. There's no training, no cloud vision, and no YOLO-World.
+- **Detection:** pretrained Ultralytics YOLO11n (COCO classes) at 1280 px wide, about 5 fps, on the GPU when available (Apple MPS or CUDA, falling back to the CPU). The higher resolution matters: across a room, items are too small to detect at 640. There's no training, no cloud vision, and no YOLO-World.
 - **Tracked items** (in [backend/catalog.py](backend/catalog.py)): Phone, Water Bottle, Laptop, Cup, Book, Backpack, Remote, Mouse. The app assumes one of each.
 - **Room areas come from Scan room**, not a fixed layout. Keepsake runs the larger YOLO11m model over a few steady frames and proposes an area for each piece of furniture it reliably sees: bed, couch, chair, table, TV, sink, fridge, oven, microwave, toilet and bench. You review the proposal and can rename ("Table" → "Desk"), resize, delete or add areas (COCO has no dresser, shelf or ottoman class). An item gets the most specific area it sits in, "near the <area>" if it's just outside one, or the left/middle/right of the room if there are no areas.
 - **When a photo is taken:** an item must be seen first (first sighting), moved to another area, or moved more than `CTRLF_MOVE_THRESHOLD` (6% of the frame) within the same area. It must then **settle**: stay within a small radius for `CTRLF_SETTLE_SECONDS` (0.8 s) and at least `CTRLF_STABILITY_FRAMES` frames, with little motion around it. Only then does Keepsake update the location and save a photo. It picks the clearest frame from that settled window, skipping frames where a detected person covers the item.
@@ -90,6 +90,8 @@ All settings are optional environment variables, read at backend start. See [.en
 | `CTRLF_CAMERA_ENABLED` | `1` | `0` runs the API with no camera |
 | `CTRLF_CONFIDENCE` | `0.4` | Minimum YOLO confidence |
 | `CTRLF_INFERENCE_FPS` | `5` | Detection rate |
+| `CTRLF_INFERENCE_WIDTH` | `1280` | Detection resolution. Lower it (e.g. 640) on slow CPUs if items are close to the camera |
+| `CTRLF_DEVICE` | auto | `mps`, `cuda` or `cpu`. Defaults to the GPU if there is one |
 | `CTRLF_STABILITY_FRAMES` | `4` | Minimum settled frames before confirming |
 | `CTRLF_SETTLE_SECONDS` | `0.8` | How long an item must hold still |
 | `CTRLF_MOVE_THRESHOLD` | `0.06` | Same-area distance (fraction of frame) that counts as a move |
@@ -170,7 +172,7 @@ These tests check the logic, not real-world perception accuracy. See the live ch
 | Scan missed a piece of furniture | Add it by hand in the review step. Pretrained COCO has no dresser, shelf, desk or ottoman class, and tables show up as "Table" |
 | "Keepsake is already running" | Another backend owns port 8000. Stop it with Ctrl+C in its window. A second copy must not share the camera and database |
 | No photo after moving an item | Let go and wait about 1 s. Photos are taken only once the item holds still and your hand is clear |
-| Item not detected | Improve the lighting or move it closer, or lower `CTRLF_CONFIDENCE` to 0.3. Small items (mouse, remote) are harder |
+| Item not detected | Check `/api/health` shows `inference_width` 1280 and a GPU `device`. Improve the lighting or move it closer, or lower `CTRLF_CONFIDENCE` to 0.3. Small items (mouse, remote) are harder |
 | Voice button says unsupported | Use Chrome, Edge or Safari, or type instead |
 
 ## Not built (stretch goals)
