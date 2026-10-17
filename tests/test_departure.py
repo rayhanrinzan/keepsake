@@ -120,6 +120,16 @@ def test_multiple_people_suppress_departures(det):
     assert f.events == []
 
 
+def test_overlapping_boxes_on_one_person_still_count_as_one(det):
+    f = Feed(det)
+    dup = lambda b: (b[0] + 0.01, b[1] + 0.05, b[2] - 0.01, b[3])  # a second box inside the first
+    f.frames(5, ROOM, dup(ROOM))
+    f.frames(3, NEAR_EXIT, dup(NEAR_EXIT))
+    f.frames(3, IN_EXIT, dup(IN_EXIT))
+    f.frames(15)
+    assert len(f.events) == 1 and det.status()["person_count"] == 0
+
+
 def test_camera_gap_restarts_the_sequence(det):
     f = Feed(det)
     f.frames(5, ROOM)

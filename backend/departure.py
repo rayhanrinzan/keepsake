@@ -38,6 +38,18 @@ def overlap(box: Box, zone: Box) -> float:
     return ix * iy / area
 
 
+def merge_people(boxes: list[Box], same: float = 0.5) -> list[Box]:
+    """Collapse boxes that mostly cover each other into one person.
+
+    Open-vocabulary detectors often put 2-3 overlapping "person" boxes on one person (seen live in
+    a dim room); counting those as several people would suppress every departure."""
+    kept: list[Box] = []
+    for b in sorted(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True):
+        if not any(overlap(b, k) >= same or overlap(k, b) >= same for k in kept):
+            kept.append(b)
+    return kept
+
+
 def validate_zone(zone) -> Box | None:
     if zone is None:
         return None
@@ -86,6 +98,7 @@ class DepartureDetector:
         self.state = IDLE
         self.hold: str | None = None
         self.person_count = 0
+        self.people: list[list[float]] = []  # merged person boxes on the latest frame (for tuning)
         self._seen = 0
         self._was_outside = False
         self._last_at_exit = 0.0
@@ -118,6 +131,7 @@ class DepartureDetector:
     def status(self) -> dict:
         return {"enabled": self.enabled, "exit_zone": list(self.exit_zone) if self.exit_zone else None,
                 "state": self.state, "hold": self.hold, "person_count": self.person_count,
+                "people": self.people,
                 "latest_id": self._events[-1]["id"] if self._events else 0}
 
     # ---- events ----
@@ -147,8 +161,9 @@ class DepartureDetector:
         with self._lock:
             gap = self._last_frame is not None and now - self._last_frame > self.max_frame_gap
             self._last_frame = now
-            boxes = [b for b, c in people if c >= self.min_person_conf]
+            boxes = merge_people([b for b, c in people if c >= self.min_person_conf])
             self.person_count = len(boxes)
+            self.people = [[round(v, 3) for v in b] for b in boxes]
             if gap:
                 hold = hold or "frame_gap"
             if not hold and len(boxes) > 1:
