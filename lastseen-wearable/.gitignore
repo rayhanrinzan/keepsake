@@ -1,0 +1,10 @@
+.venv/
+models/
+data/
+answers/
+eval/clips/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+.superpowers/
