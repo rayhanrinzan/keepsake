@@ -19,7 +19,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from catalog import ALIASES, BY_CATEGORY, CATALOG, SUPPORTED  # noqa: F401  (re-exported)
+from catalog import ALIASES, BY_CATEGORY, CATALOG, MIN_CONF, SUPPORTED  # noqa: F401  (re-exported)
 from database import Database
 from spatial import Region, locate, place_phrase
 
@@ -125,7 +125,7 @@ class SpatialMemory:
             # One instance per category: keep the most confident detection of each.
             best: dict[str, Observation] = {}
             for o in observations:
-                if o.category in ALIASES and o.confidence >= self.min_confidence:
+                if o.category in ALIASES and o.confidence >= MIN_CONF.get(o.category, self.min_confidence):
                     if o.category not in best or o.confidence > best[o.category].confidence:
                         best[o.category] = o
             events = []

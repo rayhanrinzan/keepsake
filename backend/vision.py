@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 from furniture import FURNITURE, propose_regions
+from catalog import MIN_CONF
 from memory import ALIASES, Observation, SpatialMemory, display_name
 from modes import MONITORING, ModeController
 from snapshots import SnapshotStore
@@ -22,6 +23,19 @@ from spatial import Region
 log = logging.getLogger("keepsake.vision")
 
 PERSON = "person"  # detected only to judge whether someone is covering an object
+
+
+def pick_device() -> str:
+    """Use the GPU when there is one (Apple MPS or CUDA); 1280-wide detection is ~3x faster."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+    except Exception:  # noqa: BLE001
+        pass
+    return "cpu"
 
 
 class MotionDetector:
@@ -59,8 +73,9 @@ class MotionDetector:
 class VisionWorker(threading.Thread):
     def __init__(self, memory: SpatialMemory, regions: list[Region], snapshots: SnapshotStore,
                  modes: ModeController, camera_index: int | str = 0, model_path: str = "yolo11n.pt",
-                 conf: float = 0.4, fps: float = 5.0, frame_width: int = 640,
-                 camera_shift_motion: float = 0.5, scan_model_path: str | None = None):
+                 conf: float = 0.4, fps: float = 5.0, frame_width: int = 1280,
+                 camera_shift_motion: float = 0.5, scan_model_path: str | None = None,
+                 device: str | None = None, preview_width: int = 640):
         super().__init__(daemon=True, name="vision")
         self.memory = memory
         self.regions = regions  # shared list; updated in place by calibration
@@ -72,7 +87,9 @@ class VisionWorker(threading.Thread):
         self._scan_model = None
         self.conf = conf
         self.interval = 1.0 / max(fps, 0.5)
-        self.frame_width = frame_width
+        self.frame_width = frame_width  # detection resolution; small items across a room need ~1280
+        self.preview_width = preview_width
+        self.device = device or pick_device()
         self.camera_shift_motion = camera_shift_motion
         self.motion = MotionDetector()
         self._ring: deque[tuple[int, np.ndarray]] = deque(maxlen=12)  # (frame_id, snapshot-size frame)
@@ -80,14 +97,21 @@ class VisionWorker(threading.Thread):
         self._shift_frames = 0
         self._halt = threading.Event()
         self._jpeg: bytes | None = None
+        self._jpeg_id = 0
         self._jpeg_lock = threading.Lock()
         self.status = {"camera": "starting", "error": None, "warning": None, "fps": 0.0,
+                       "device": self.device, "inference_width": frame_width,
                        "motion": 0.0, "detections": [], "model": model_path}
 
     # ---- public ----
     def latest_jpeg(self) -> bytes | None:
         with self._jpeg_lock:
             return self._jpeg
+
+    def latest_frame(self) -> tuple[int, bytes | None]:
+        """(frame number, annotated JPEG) of the newest processed frame."""
+        with self._jpeg_lock:
+            return self._jpeg_id, self._jpeg
 
     def stop(self) -> None:
         self._halt.set()
@@ -98,11 +122,22 @@ class VisionWorker(threading.Thread):
             from ultralytics import YOLO, settings
             settings.update({"sync": False})  # no Ultralytics telemetry
             model = YOLO(self.model_path)
+            if "world" in str(self.model_path).lower():  # open vocabulary: tell it what to look for
+                from catalog import SUPPORTED
+                try:
+                    model.set_classes(SUPPORTED + [PERSON])
+                except ImportError as e:  # YOLO-World encodes the prompts with CLIP
+                    raise RuntimeError(
+                        "YOLO-World needs CLIP: run .venv/bin/pip install -r backend/requirements.txt") from e
         except Exception as e:  # noqa: BLE001
             log.exception("model load failed")
             self.status.update(camera="error", error=f"Model load failed: {e}")
             return
         class_ids = [i for i, n in model.names.items() if n in ALIASES or n == PERSON]
+        missing = [c for c in ALIASES if c not in model.names.values()]
+        if missing:  # e.g. a COCO-only model can't see keys or wallets
+            log.warning("detector %s can't detect: %s", self.model_path, ", ".join(missing))
+        self.status["undetectable"] = missing
 
         cap = None
         failures = 0
@@ -179,9 +214,14 @@ class VisionWorker(threading.Thread):
                 log.info("%s %s -> %s", ev["event_type"], ev["name"], ev["region"])
         except Exception as e:  # noqa: BLE001
             log.exception("inference failed")
+            if self.device != "cpu":  # e.g. an MPS op that isn't supported: fall back for good
+                log.warning("falling back to CPU inference")
+                self.device = self.status["device"] = "cpu"
+                model.predictor = None
             self.status["error"] = f"Detection error: {e}"
             obs = []
-        self._publish(frame, [o for o in obs if o.category != PERSON])
+        shown = [o for o in obs if o.category in MIN_CONF and o.confidence >= MIN_CONF[o.category]]
+        self._publish(self._resize(frame, self.preview_width), shown)  # only what memory would accept
 
     def _scan(self, model, reference: np.ndarray) -> tuple[bytes | None, list[dict]]:
         """Scan room: detect furniture over the last few (steady) frames and propose areas."""
@@ -198,7 +238,8 @@ class VisionWorker(threading.Thread):
         for _, f in list(self._ring)[-5:]:
             small = self._resize(f, self.frame_width)
             h, w = small.shape[:2]
-            res = model.predict(small, conf=0.25, classes=ids, verbose=False)[0]
+            res = model.predict(small, conf=0.25, classes=ids, imgsz=self.frame_width,
+                                device=self.device, verbose=False)[0]
             per_frame.append([(model.names[int(c)], float(cf), (b[0] / w, b[1] / h, b[2] / w, b[3] / h))
                               for b, c, cf in zip(res.boxes.xyxy.tolist(), res.boxes.cls.tolist(),
                                                   res.boxes.conf.tolist())])
@@ -245,6 +286,7 @@ class VisionWorker(threading.Thread):
 
     def _detect(self, model, frame: np.ndarray, class_ids: list[int]) -> list[Observation]:
         res = model.track(frame, persist=True, tracker="bytetrack.yaml", conf=self.conf,
+                          imgsz=self.frame_width, device=self.device,
                           classes=class_ids, verbose=False)[0]
         h, w = frame.shape[:2]
         obs: list[Observation] = []
@@ -282,6 +324,7 @@ class VisionWorker(threading.Thread):
         if jpg:
             with self._jpeg_lock:
                 self._jpeg = jpg
+                self._jpeg_id = self._frame_id
         self.status["detections"] = [
             {"category": o.category, "name": display_name(o.category),
              "confidence": round(o.confidence, 2), "track_id": o.track_id} for o in obs]

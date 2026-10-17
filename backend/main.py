@@ -30,7 +30,7 @@ def env(name: str, default: str) -> str:
 regions = load_regions()
 db = Database(env("DB_PATH", str(HERE / "data" / "ctrlf.db")))
 memory = SpatialMemory(db, regions, stability=int(env("STABILITY_FRAMES", "4")),
-                       min_confidence=float(env("CONFIDENCE", "0.4")),
+                       min_confidence=float(env("CONFIDENCE", "0.35")),  # fallback; per-item min_conf in catalog.py
                        absence_seconds=float(env("ABSENCE_SECONDS", "2.0")),
                        move_threshold=float(env("MOVE_THRESHOLD", "0.06")),
                        settle_seconds=float(env("SETTLE_SECONDS", "0.8")))
@@ -50,10 +50,12 @@ async def lifespan(_: FastAPI):
         source = env("CAMERA_INDEX", "0")  # webcam index, or a video file path for testing
         worker = VisionWorker(memory, regions, snapshots, modes,
                               camera_index=int(source) if source.isdigit() else source,
-                              model_path=env("MODEL", str(HERE / "models" / "yolo11n.pt")),
-                              conf=float(env("CONFIDENCE", "0.4")),
+                              model_path=env("MODEL", str(HERE / "models" / "yolov8s-worldv2.pt")),
+                              conf=float(env("DETECT_CONFIDENCE", "0.15")),  # candidate cutoff; items filter higher
                               fps=float(env("INFERENCE_FPS", "5")),
-                              scan_model_path=env("SCAN_MODEL", str(HERE / "models" / "yolo11m.pt")))
+                              scan_model_path=env("SCAN_MODEL", str(HERE / "models" / ("yolo11m.pt" if (HERE / "models" / "yolo11m.pt").exists() else "yolo11n.pt"))),
+                              frame_width=int(env("INFERENCE_WIDTH", "1280")),
+                              device=env("DEVICE", "") or None)
         worker.start()
     yield
     if worker:
@@ -280,6 +282,19 @@ def put_regions(body: RegionsIn):
 
 
 # ---------- live camera ----------
+
+@app.get("/api/camera/frame")
+def camera_frame():
+    """Newest annotated frame as a single JPEG (kept in memory only). The dashboard polls this;
+    short requests recover on their own where a long-lived MJPEG stream can stall in the browser."""
+    if worker is None:
+        raise HTTPException(503, "Camera disabled")
+    frame_id, jpg = worker.latest_frame()
+    if jpg is None:
+        raise HTTPException(503, "No frame yet")
+    return Response(jpg, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store", "X-Frame-Id": str(frame_id)})
+
 
 @app.get("/api/camera")
 async def camera():

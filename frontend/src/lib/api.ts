@@ -122,5 +122,6 @@ export const api = {
   saveRegions: (regions: { name: string; kind: string; camera: number[] }[]) =>
     req<Region[]>('/regions', json('PUT', { regions })),
   cameraUrl: '/api/camera',
+  frameUrl: '/api/camera/frame',
   referenceUrl: '/api/calibration/reference',
 }
