@@ -6,19 +6,20 @@ the text and reports back. Nothing here does network I/O, and it never runs on t
 
 Evidence, weakest to strongest (it never claims more than it has):
   object_observed / object_reobserved  a real, photo-backed stable sighting. Not a placement.
-  placement_inferred                   stationary camera only: the item moved, then settled.
+  placement_inferred                   fixed camera only: memory saw the item move, then settle.
   placement_confirmed                  from hand-interaction evidence (issue #5), when available.
   interaction_candidate                hand near the item: recorded, never cancels or triggers.
   possible_pickup                      cancels a pending reminder only at pickup_cancel_conf.
 
-Observations come from Keepsake's own snapshot rows (every confirmed sighting with its photo), so
-the engine needs no hook in the vision pipeline. Other producers (hand tracking) POST events with
-the contract in integrations/photon/EVENTS.md or call `ingest()`.
+Events come from the vision pipeline's `observations` table (backend/events.py, issues #4/#5:
+object_observed, interaction_candidate, possible_pickup, placement_confirmed), read by `seq` cursor
+on the engine's own thread. With a fixed camera, memory's "moved then settled" photo rows are also
+read as placement_inferred. Other producers can POST the same contract or call `ingest()`.
 
 Separation (what makes a pending reminder due):
   wearable    the item has been out of the wearer's view for the mode's delay. A weak signal: it
               says the camera turned away, not that the item stayed behind.
-  stationary  a tracked person left the view (departure feed) after the placement.
+  fixed       a tracked person left the view (departure feed) after the placement.
   either      an explicit check: "I'm heading out" or the manual demo trigger.
 
 This is a hackathon prototype for memory support, not a clinically validated monitoring device.
@@ -61,7 +62,7 @@ PRESETS: dict[str, dict] = {
         "global_cooldown": 60,
         "max_photo_age": 1800,          # photo must be at most this old when the reminder goes out
         "max_pending": 900,             # give up on a pending reminder after this long
-        "pickup_cancel_conf": 0.6,
+        "pickup_cancel_conf": 0.55,     # events.py pickups: 0.55 (left with hand) .. 0.7 (moved with it)
         "snooze": 600,
         "tone": "gentle",
     },
@@ -73,7 +74,7 @@ PRESETS: dict[str, dict] = {
         "global_cooldown": 600,
         "max_photo_age": 7200,
         "max_pending": 1800,
-        "pickup_cancel_conf": 0.6,
+        "pickup_cancel_conf": 0.55,
         "snooze": 900,
         "tone": "heading_out",
     },
@@ -82,7 +83,6 @@ DEFAULT_SETTINGS = {
     "enabled": False,        # nothing is queued until someone explicitly opts in
     "mode": "off",
     "opted_in_at": None,
-    "camera_mode": "wearable",
     "important": ["keys", "wallet", "phone"],  # names/aliases; resolved against the catalog
     "overrides": {"high_assistance": {}, "everyday": {}},
     "paused_until": None,    # epoch seconds; float("inf") is stored as -1 (paused until resumed)
@@ -139,12 +139,13 @@ class _Obj:
 
 class ReminderEngine:
     def __init__(self, db, memory=None, modes=None, regions=None, departures=None,
-                 status_fn=None, clock=time.time):
+                 status_fn=None, clock=time.time, camera_mode: str = "wearable"):
         self.db = db
+        self.camera_mode = "fixed" if camera_mode in ("fixed", "stationary") else "wearable"  # CTRLF_CAMERA_MODE
         self.memory = memory
         self.modes = modes
         self.regions = regions if regions is not None else []
-        self.departures = departures      # DepartureFeed (stationary camera separation signal)
+        self.departures = departures      # DepartureFeed (fixed camera separation signal)
         self.status_fn = status_fn or (lambda: {})
         self.clock = clock
         self.items = {c["object_id"]: c for c in CATALOG}
@@ -158,7 +159,8 @@ class ReminderEngine:
         self._alert_ids = itertools.count(1)
         self._last_alerted: dict[str, float] = {}
         self._last_alert_at = float("-inf")
-        self._snapshot_cursor = self._max_snapshot_id()   # only react to sightings from now on
+        self._snapshot_cursor = self._max_snapshot_id()   # only react to evidence from now on
+        self._observation_cursor = self._max_observation_seq()
         self._departure_cursor = departures.latest_id() if departures else 0
         self._departure_at = float("-inf")
         self.log: deque[dict] = deque(maxlen=200)         # diagnostics, no message text
@@ -175,6 +177,7 @@ class ReminderEngine:
                 s.update(json.loads(raw))
             except ValueError:
                 log.warning("unreadable reminder settings; using defaults")
+        s.pop("camera_mode", None)  # now CTRLF_CAMERA_MODE, shared with the vision pipeline
         return s
 
     def _save_settings(self) -> None:
@@ -196,10 +199,6 @@ class ReminderEngine:
                 new["mode"] = changes["mode"]
             if "enabled" in changes:
                 new["enabled"] = bool(changes["enabled"])
-            if "camera_mode" in changes:
-                if changes["camera_mode"] not in ("wearable", "stationary"):
-                    raise ValueError("camera_mode must be wearable or stationary")
-                new["camera_mode"] = changes["camera_mode"]
             if "important" in changes:
                 important = []
                 for name in changes["important"]:
@@ -224,11 +223,10 @@ class ReminderEngine:
             if turning_on and not was_on:
                 new["opted_in_at"] = _iso(self.clock())
             mode_changed = new["mode"] != self.settings["mode"] or new["enabled"] != self.settings["enabled"]
-            camera_changed = new["camera_mode"] != self.settings["camera_mode"]
             self.settings = new
             self._save_settings()
-            if mode_changed or camera_changed:
-                self._cancel_all("mode_changed" if mode_changed else "camera_mode_changed")
+            if mode_changed:
+                self._cancel_all("mode_changed")
             return self.status()
 
     def important(self) -> list[str]:
@@ -410,16 +408,32 @@ class ReminderEngine:
             self._snapshot_cursor = rows[-1]["id"]
         return rows
 
-    def _from_snapshot(self, s: dict) -> dict:
-        """A stored sighting (always photo-backed) as an engine event."""
-        moved = s["event_type"] in ("moved", "moved_within")
-        stationary = self.settings["camera_mode"] == "stationary"
-        etype = "placement_inferred" if moved and stationary else "object_observed"
-        return {"event_id": f"snapshot:{s['id']}", "event_type": etype, "object_id": s["object_id"],
-                "t": _ts(s["timestamp"]) or self.clock(), "confidence": s["confidence"] or 0.0,
-                "snapshot_id": s["id"], "evidence": [f"memory_{s['event_type']}"],
-                "camera_mode": self.settings["camera_mode"], "view_id": s.get("view_id"),
-                "source": "memory"}
+    def _from_snapshot(self, s: dict) -> dict | None:
+        """Fixed camera only: memory's "moved, then settled" photo as placement_inferred.
+
+        Plain sightings come from the observations table instead, so nothing is counted twice."""
+        if self.camera_mode != "fixed" or s["event_type"] not in ("moved", "moved_within"):
+            return None
+        return {"event_id": f"snapshot:{s['id']}", "event_type": "placement_inferred",
+                "object_id": s["object_id"], "t": _ts(s["timestamp"]) or self.clock(),
+                "confidence": s["confidence"] or 0.0, "snapshot_id": s["id"],
+                "evidence": [f"memory_{s['event_type']}"], "camera_mode": "fixed",
+                "view_id": s.get("view_id"), "source": "memory"}
+
+    def _max_observation_seq(self) -> int:
+        if not hasattr(self.db, "get_observations"):
+            return 0
+        newest = self.db.get_observations(limit=1)
+        return newest[0]["seq"] if newest else 0
+
+    def _new_observations(self) -> list[dict]:
+        """Vision pipeline events (backend/events.py contract), oldest first."""
+        if not hasattr(self.db, "get_observations"):
+            return []
+        rows = list(reversed(self.db.get_observations(limit=200, after_seq=self._observation_cursor)))
+        if rows:
+            self._observation_cursor = rows[-1]["seq"]
+        return [{**r, "source": "observations"} for r in rows]
 
     # ---------- per tick ----------
     def tick(self, now: float | None = None) -> list[dict]:
@@ -432,9 +446,15 @@ class ReminderEngine:
                     self._apply(self.normalize(raw), now)
                 except EventError as e:
                     log.warning("rejected reminder event: %s", e)
+            for raw in self._new_observations():
+                try:
+                    self._apply(self.normalize(raw), now)
+                except EventError as e:
+                    log.warning("skipped observation %s: %s", raw.get("event_id"), e)
             for s in self._new_snapshots():
-                if s["object_id"] in self._objs:
-                    self._apply(self._from_snapshot(s), now)
+                ev = self._from_snapshot(s) if s["object_id"] in self._objs else None
+                if ev:
+                    self._apply(ev, now)
             status = self.status_fn() or {}
             hold = hold_reason(self.modes, self.memory, status, now=now) if self.modes else None
             self._read_departures(status, hold)
@@ -465,8 +485,8 @@ class ReminderEngine:
         return self.memory is None or rec.get("view_id") in (None, getattr(self.memory, "view_id", None))
 
     def _place(self, rec: dict | None) -> str | None:
-        """A location phrase only when the memory supports it (stationary camera, current view)."""
-        if (self.settings["camera_mode"] != "stationary" or not rec or not rec.get("region")
+        """A location phrase only when the memory supports it (fixed camera, current view)."""
+        if (self.camera_mode != "fixed" or not rec or not rec.get("region")
                 or not self._view_ok(rec)):
             return None
         return place_phrase(rec["region"], self.regions)
@@ -474,16 +494,16 @@ class ReminderEngine:
     def _blocked(self, o: _Obj, rec: dict | None, photo: dict | None, policy: dict, now: float,
                  hold: str | None) -> str | None:
         """Why a pending reminder must be cancelled now (None = still fine)."""
-        stationary = self.settings["camera_mode"] == "stationary"
+        fixed = self.camera_mode == "fixed"
         if hold in ("camera_repositioning", "camera_unavailable", "camera_dark"):
             return hold
-        if hold == "camera_shift" and stationary:
+        if hold == "camera_shift" and fixed:
             return "camera_shift"  # wearable cameras move all the time; that's not unreliability
         if rec is None or not rec.get("last_seen"):
             return "no_memory"
         if rec.get("lost_while_moving"):
             return "lost_while_moving"  # seen being moved out of view: likely carried
-        if stationary and not self._view_ok(rec):
+        if fixed and not self._view_ok(rec):
             return "location_unreliable"
         if photo is None:
             return "no_photo"
@@ -498,7 +518,7 @@ class ReminderEngine:
             return False
         if now - o.started < policy["delay"]:
             return False
-        if self.settings["camera_mode"] == "stationary":
+        if self.camera_mode == "fixed":
             return self._departure_at > o.started  # someone left after it was put down
         last_seen = _ts(rec["last_seen"]) or now
         return not rec.get("visible") and now - last_seen >= policy["delay"]
@@ -713,7 +733,7 @@ class ReminderEngine:
         now = self.clock()
         with self._lock:
             p = self.settings.get("paused_until")
-            return {"settings": {**self.settings,
+            return {"settings": {**self.settings, "camera_mode": self.camera_mode,
                                  "paused_until": None if p in (None, -1) else _iso(p),
                                  "paused": self.paused(now)},
                     "policy": self.policy(), "active": self.active(),

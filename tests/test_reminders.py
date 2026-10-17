@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+import events as E
 from conftest import TEST_AREAS
 from departure import DepartureFeed
 from reminders import (CANCELLED, PENDING_REMINDER, PLACEMENT_CANDIDATE, POSSIBLE_INTERACTION,
@@ -40,28 +41,55 @@ class World:
                                       states=lambda: {})
         self.modes = SimpleNamespace(mode="MONITORING")
         self.status = status if status is not None else {"camera": "active"}
+        self.camera_mode = camera_mode
         self.engine = ReminderEngine(db, self.memory, self.modes, list(TEST_AREAS), departures,
-                                     status_fn=lambda: self.status, clock=self.clock)
-        self.engine.update_settings({"camera_mode": camera_mode})
+                                     status_fn=lambda: self.status, clock=self.clock,
+                                     camera_mode=camera_mode)
         if enable:
             self.engine.update_settings({"mode": mode, "enabled": True}, opt_in=True)
         self.alerts = []
 
+    def photo(self, oid, event_type="object_observed", region="Bed", conf=0.8, view_id="view-a"):
+        return self.db.add_snapshot({"object_id": oid, "event_type": event_type,
+                                     "timestamp": iso(self.clock.t), "region": region,
+                                     "x0": 0.7, "y0": 0.4, "x1": 0.9, "y1": 0.6, "confidence": conf,
+                                     "filename": f"{oid}-{self.clock.t}-{event_type}.jpg",
+                                     "view_id": view_id})
+
+    def observe(self, etype, category="wallet", conf=0.8, evidence=None, photo=True):
+        """A vision event exactly as vision.py records it (events.make_event -> observations
+        table; the photo id is filled in after the async write)."""
+        oid = f"{category.replace(' ', '_')}_01"
+        default = {E.OBJECT_OBSERVED: ["stable_object_detection", "camera_steady"],
+                   E.INTERACTION_CANDIDATE: ["hand_near_object", "camera_steady"],
+                   E.POSSIBLE_PICKUP: ["hand_near_object", "object_moved_with_hand"],
+                   E.PLACEMENT_CONFIRMED: ["prior_possible_pickup", "hand_released", "camera_steady"]}
+        ev = E.make_event(etype, object_id=oid, category=category, name=category.title(),
+                          timestamp=datetime.fromtimestamp(self.clock.t, timezone.utc),
+                          confidence=conf, bbox=(0.7, 0.4, 0.9, 0.6),
+                          evidence=evidence or default[etype],
+                          camera_mode="fixed" if self.camera_mode == "fixed" else "wearable",
+                          view_id="view-a")
+        self.db.add_observation(ev)
+        if photo and etype in (E.OBJECT_OBSERVED, E.PLACEMENT_CONFIRMED):
+            self.db.set_observation_snapshot(ev["event_id"], self.photo(oid, etype, conf=conf))
+        return ev
+
     def sight(self, category="wallet", visible=True, region="Bed", event_type="first_seen",
               conf=0.8, view_id="view-a", lost=False, photo=True):
-        """The item is seen now: object row (+ a stored photo, as memory writes on confirm)."""
+        """The item is seen now: memory's object row, plus what the camera mode produces —
+        wearable: an object_observed event with its photo; fixed: memory's own photo row."""
         oid = f"{category.replace(' ', '_')}_01"
         self.db.upsert_object({"object_id": oid, "category": category, "name": category.title(),
                                "region": region, "x": 0.8, "y": 0.5, "last_seen": iso(self.clock.t),
                                "visible": visible, "confidence": conf, "view_id": view_id,
                                "lost_while_moving": lost})
-        if photo:
-            return self.db.add_snapshot({"object_id": oid, "event_type": event_type,
-                                         "timestamp": iso(self.clock.t), "region": region,
-                                         "x0": 0.7, "y0": 0.4, "x1": 0.9, "y1": 0.6,
-                                         "confidence": conf, "filename": f"{oid}-{self.clock.t}.jpg",
-                                         "view_id": view_id})
-        return None
+        if not photo:
+            return None
+        if self.camera_mode == "fixed":
+            return self.photo(oid, event_type, region, conf, view_id)
+        ev = self.observe(E.OBJECT_OBSERVED, category, conf)
+        return self.db.get_observations(limit=1)[0]["snapshot_id"] if ev else None
 
     def hide(self, category="wallet"):
         """Memory marks the item out of view (last_seen stays at the last sighting)."""
@@ -116,7 +144,7 @@ def test_settings_persist_and_validate(db):
     again = ReminderEngine(db, clock=w.clock)
     assert again.important() == ["bottle_01", "car_key_01"]
     assert again.policy()["delay"] == 20 and again.active()
-    for bad in [{"mode": "loud"}, {"important": ["umbrella"]}, {"camera_mode": "drone"},
+    for bad in [{"mode": "loud"}, {"important": ["umbrella"]},
                 {"overrides": {"everyday": {"tone": 1}}}, {"overrides": {"everyday": {"delay": -5}}}]:
         with pytest.raises(ValueError):
             w.engine.update_settings(bad)
@@ -370,10 +398,15 @@ def test_camera_motion_alone_does_not_cancel_on_a_wearable(db):
     assert len(w.alerts) == 1
 
 
-def test_wearable_moved_rows_are_only_observations(w):
-    w.sight(event_type="moved")
+def test_wearable_ignores_memory_photo_rows_and_counts_each_sighting_once(w):
+    oid = "wallet_01"
+    w.photo(oid, "moved")  # memory rows on a moving camera are not evidence of anything
+    w.run(1)
+    assert w.state().state == "IDLE"
+    w.sight()  # one observation (+ its photo row) -> exactly one episode
     w.run(1)
     assert w.state().evidence == "object_observed"
+    assert sum(e["what"] == "pending" for e in w.engine.log) == 1
 
 
 @pytest.mark.parametrize("status", [{"camera": "error"}, {"camera": "active",
@@ -401,7 +434,7 @@ def test_scan_room_cancels_pending(w):
 
 def test_stationary_camera_needs_a_departure_and_grounds_the_place(db):
     feed = DepartureFeed()
-    w = World(db, camera_mode="stationary", departures=feed, status={"camera": "active",
+    w = World(db, camera_mode="fixed", departures=feed, status={"camera": "active",
                                                                      "target_left_count": 0})
     w.sight(region="Bed", event_type="moved")
     w.run(1)
@@ -414,7 +447,7 @@ def test_stationary_camera_needs_a_departure_and_grounds_the_place(db):
 
 
 def test_stationary_camera_shift_or_view_change_cancels(db):
-    w = World(db, camera_mode="stationary", status={"camera": "active"})
+    w = World(db, camera_mode="fixed", status={"camera": "active"})
     w.sight(event_type="moved")
     w.run(1)
     w.memory.view_id = "view-b"  # Scan room finished: old region isn't reliable now
@@ -577,3 +610,76 @@ def test_reminder_api_opt_in_events_check_and_delivery(api):
     assert c.post("/api/reminders/alerts/99/claim", headers=LOCAL).status_code == 404
     assert c.post("/api/reminders/ack", headers=LOCAL, json={"action": "pause"}).json()["paused"]
     assert c.get("/api/reminders/settings").json()["settings"]["paused"] is True
+
+
+# ---------- Amanda's vision events (backend/events.py contract, observations table) ----------
+
+def test_vision_pickup_then_placement_schedules_and_reminds(db):
+    w = World(db, mode="everyday")
+    w.sight()
+    w.run(1)
+    assert w.state().state != PENDING_REMINDER  # Everyday: a sighting alone is not enough
+    w.observe(E.INTERACTION_CANDIDATE, conf=0.4)
+    w.observe(E.POSSIBLE_PICKUP, conf=0.7)
+    w.run(1)
+    w.observe(E.PLACEMENT_CONFIRMED, conf=0.75)
+    w.run(1)
+    o = w.state()
+    assert o.state == PENDING_REMINDER and o.evidence == "placement_confirmed" and o.snapshot_id
+    w.hide()
+    w.run(200, step=5)
+    assert len(w.alerts) == 1 and w.alerts[0]["items"][0]["evidence"] == "placement_confirmed"
+
+
+@pytest.mark.parametrize("conf,evidence", [(0.7, ["hand_near_object", "object_moved_with_hand"]),
+                                           (0.55, ["hand_near_object", "object_left_with_hand"])])
+def test_vision_pickup_cancels_pending(w, conf, evidence):
+    w.sight()
+    w.run(1)
+    w.observe(E.POSSIBLE_PICKUP, conf=conf, evidence=evidence)
+    w.run(1)
+    assert w.state().state == CANCELLED and w.state().reason == "picked_up"
+    w.hide()
+    w.run(30)
+    assert w.alerts == []
+
+
+def test_vision_hand_near_item_never_cancels(w):
+    w.sight()
+    w.run(1)
+    for _ in range(3):
+        w.observe(E.INTERACTION_CANDIDATE, conf=0.4)
+        w.run(1)
+    assert w.state().state == PENDING_REMINDER
+    w.hide()
+    w.run(20)
+    assert len(w.alerts) == 1
+
+
+def test_vision_placement_waits_for_its_photo(db):
+    w = World(db, mode="everyday")
+    ev = w.observe(E.PLACEMENT_CONFIRMED, conf=0.8, photo=False)  # photo not written yet
+    w.sight(photo=False)
+    w.run(1)
+    assert w.state().state == PLACEMENT_CANDIDATE
+    db.set_observation_snapshot(ev["event_id"], w.photo("wallet_01", E.PLACEMENT_CONFIRMED))
+    w.run(1)
+    assert w.state().state == PENDING_REMINDER
+
+
+def test_vision_events_from_before_startup_are_ignored(db):
+    w0 = World(db, enable=False)
+    w0.observe(E.PLACEMENT_CONFIRMED, conf=0.9)
+    w = World(db, mode="everyday")  # engine started after that placement
+    w.run(5)
+    assert w.state().state == "IDLE"
+
+
+def test_fixed_camera_uses_memory_moves_and_vision_events_once(db):
+    w = World(db, camera_mode="fixed", mode="everyday", status={"camera": "active"})
+    w.sight(event_type="moved")
+    w.run(1)
+    assert w.state().evidence == "placement_inferred"
+    w.photo("wallet_01", "first_seen")  # memory's first_seen photo rows aren't events
+    w.run(1)
+    assert sum(e["what"] == "pending" for e in w.engine.log) == 1

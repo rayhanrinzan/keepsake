@@ -13,8 +13,8 @@ or monitoring device, and reminders are not emergency or medical alerts.
 
 ```
 backend (Python)                                        integrations/photon (TypeScript)
-snapshot rows (real photos) ─┐
-hand events (EVENTS.md) ─────┼─► reminders.py policy ─► GET /api/reminders/alerts ◄─ poll ─ reminders.ts
+vision events (events.py) ───┐
+memory moves (fixed camera) ─┼─► reminders.py policy ─► GET /api/reminders/alerts ◄─ poll ─ reminders.ts
 tracked departure (fixed cam)┘   (state per item)       claim → send → result ───────────► Photon ─► iMessage
                                                         /ack, /check, /settings ◄── inbound.ts ◄── your replies
 ```
@@ -53,9 +53,9 @@ Both modes:
   - cooldown or age
 
 **Separation** is what makes a reminder due:
-- **Wearable** (default `camera_mode`): the item has been out of the wearer's view for the delay.
+- **Wearable** (default `CTRLF_CAMERA_MODE`): the item has been out of the wearer's view for the delay.
   This is a weak signal. It means the camera turned away, not that the item stayed behind.
-- **Stationary camera:** a tracked person left the view after the placement. Only in this mode do
+- **Fixed camera** (`CTRLF_CAMERA_MODE=fixed`): a tracked person left the view after the placement. Only in this mode do
   reminders name an area such as "on the bed", because only then do Keepsake's room areas mean anything.
 - **Either:** an explicit "heading out" text or the manual check.
 
@@ -80,8 +80,8 @@ curl -X PUT http://127.0.0.1:8000/api/reminders/settings -H 'X-Keepsake-Local: 1
   -d '{"mode": "high_assistance", "enabled": true, "opt_in": true, "important": ["wallet", "bottle", "keys"]}'
 ```
 
-Settings persist in Keepsake's database. Other fields: `camera_mode` (`wearable` | `stationary`) and
-`overrides` (per mode: `delay`, `min_confidence`, `per_item_cooldown`, `global_cooldown`,
+Settings persist in Keepsake's database. The camera mode is the vision pipeline's own
+`CTRLF_CAMERA_MODE` (`wearable` | `fixed`). Per-mode tuning goes in `overrides` (per mode: `delay`, `min_confidence`, `per_item_cooldown`, `global_cooldown`,
 `max_photo_age`, `max_pending`, `pickup_cancel_conf`, `snooze`). Inspect everything, including each
 item's state and recent decisions, with `GET /api/reminders/settings`.
 
@@ -111,9 +111,11 @@ either queues a reminder, which the agent then sends, or prints why each item wa
 
 ## Hand-interaction events
 
-See [EVENTS.md](EVENTS.md) for the contract. Hand tracking (issue #5) isn't merged yet, so
-automatic reminders currently rely on memory's own photo-backed sightings, with the cautious
-High-Assistance wording.
+Amanda's vision pipeline (`backend/events.py`, `wearable.py`, `hands.py`) emits `object_observed`,
+`interaction_candidate`, `possible_pickup` and `placement_confirmed`. The engine reads them
+directly; [EVENTS.md](EVENTS.md) explains what each one does to a reminder. Hand detection needs
+MediaPipe and its model (see `backend/hands.py`). Without it, only `object_observed` is emitted
+and reminders fall back to the cautious High-Assistance path.
 
 ## Test
 

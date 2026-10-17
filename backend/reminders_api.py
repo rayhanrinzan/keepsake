@@ -16,7 +16,6 @@ class SettingsIn(BaseModel):
     mode: str | None = None
     enabled: bool | None = None
     opt_in: bool = False
-    camera_mode: str | None = None
     important: list[str] | None = None
     overrides: dict[str, dict[str, float]] | None = None
 
