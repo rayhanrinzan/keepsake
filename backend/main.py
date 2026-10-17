@@ -18,6 +18,8 @@ from catalog import CATALOG
 from database import Database
 from departure import DepartureFeed, DeparturePresence
 from departure_api import departure_router
+from reminders import ReminderEngine
+from reminders_api import reminders_router
 from memory import SpatialMemory, answer_query, parse_query
 from modes import ModeController, ModeError
 from snapshots import SnapshotStore
@@ -52,6 +54,8 @@ snapshots = SnapshotStore(db, env("SNAPSHOT_DIR", str(HERE / "data" / "snapshots
                           cooldown_seconds=float(env("SNAPSHOT_COOLDOWN", "3")))
 modes = ModeController(memory)
 departures = DepartureFeed()  # possible departures for Departure Alerts (integrations/photon)
+reminders = ReminderEngine(db, memory, modes, regions, departures,  # smart memory reminders
+                           status_fn=lambda: dict(worker.status) if worker else {})
 _regions_before: list = []  # areas when the current scan started
 worker = None
 grok = GrokTTS(os.environ["XAI_API_KEY"]) if os.getenv("XAI_API_KEY") else None
@@ -75,7 +79,10 @@ async def lifespan(_: FastAPI):
                               frame_width=int(env("INFERENCE_WIDTH", "1280")),
                               device=env("DEVICE", "") or None)
         worker.start()
+    if env("REMINDERS_THREAD", "1") == "1":
+        reminders.start()  # its own thread: never blocks the camera loop
     yield
+    reminders.stop()
     if worker:
         worker.stop()
         worker.join(timeout=5)
@@ -88,6 +95,7 @@ app.add_middleware(CORSMiddleware,
                    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_methods=["*"], allow_headers=["*"])
 app.include_router(departure_router(departures, db, memory, modes, regions, lambda: worker))
+app.include_router(reminders_router(reminders))
 
 
 # ---------- serializers ----------
