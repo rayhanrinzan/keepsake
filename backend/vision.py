@@ -19,12 +19,13 @@ from furniture import FURNITURE, propose_regions
 from catalog import MIN_CONF
 from memory import ALIASES, Observation, SpatialMemory, display_name
 from modes import MONITORING, ModeController
+from presence import PresenceTracker
 from snapshots import SnapshotStore
 from spatial import Region
 
 log = logging.getLogger("keepsake.vision")
 
-PERSON = "person"  # detected only to judge whether someone is covering an object
+PERSON = "person"  # detected to judge occlusion and whether someone is in the room
 
 
 def pick_device() -> str:
@@ -77,7 +78,8 @@ class VisionWorker(threading.Thread):
                  modes: ModeController, camera_index: int | str = 0, model_path: str = "yolo11n.pt",
                  conf: float = 0.4, fps: float = 5.0, frame_width: int = 1280,
                  camera_shift_motion: float = 0.5, scan_model_path: str | None = None,
-                 device: str | None = None, preview_width: int = 640):
+                 device: str | None = None, preview_width: int = 640,
+                 presence: PresenceTracker | None = None):
         super().__init__(daemon=True, name="vision")
         self.memory = memory
         self.regions = regions  # shared list; updated in place by calibration
@@ -95,6 +97,7 @@ class VisionWorker(threading.Thread):
         self.device = device or pick_device()
         self.camera_shift_motion = camera_shift_motion
         self.motion = MotionDetector()
+        self.presence = presence or PresenceTracker()
         self._ring: deque[tuple[int, np.ndarray]] = deque(maxlen=12)  # (frame_id, snapshot-size frame)
         self._frame_id = 0
         self._shift_frames = 0
@@ -104,7 +107,8 @@ class VisionWorker(threading.Thread):
         self._jpeg_lock = threading.Lock()
         self.status = {"camera": "starting", "error": None, "warning": None, "fps": 0.0,
                        "device": self.device, "inference_width": frame_width,
-                       "motion": 0.0, "detections": [], "model": model_path}
+                       "motion": 0.0, "detections": [], "model": model_path,
+                       **self.presence.status()}
 
     # ---- public ----
     def latest_jpeg(self) -> bytes | None:
@@ -214,6 +218,12 @@ class VisionWorker(threading.Thread):
             obs = self._detect(model, frame, class_ids)
             for o in obs:
                 o.motion = self.motion.local(o.bbox)
+            if monitoring:
+                if self.presence.update(obs) == "left":
+                    log.info("person left the view")
+            else:  # camera is being moved: nobody "leaves"
+                self.presence.reset()
+            self.status.update(self.presence.status())
             events = self.memory.observe(obs, frame_id=self._frame_id)
             for ev in events:
                 self.snapshots.submit(ev, self._frame_for(ev.get("frame_id")))

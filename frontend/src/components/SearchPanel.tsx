@@ -15,7 +15,13 @@ const PHASE_LABEL: Record<Phase, string> = {
   RESPONDING: 'Answering…',
 }
 
-export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }) {
+const DECLINE = /^(no|nope|nah|nothing|i'?m (good|fine|ok(ay)?)|not really|no thanks?)\b/i
+
+export function SearchPanel({ onResult, prompt }: {
+  onResult: (r: QueryResult) => void
+  /** Ask unprompted (e.g. someone walked out of view). A new id starts a new conversation. */
+  prompt?: { id: number; text: string } | null
+}) {
   const [phase, setPhase] = useState<Phase>('IDLE')
   const [heard, setHeard] = useState('')
   const [answer, setAnswer] = useState<string | null>(null)
@@ -23,7 +29,16 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
   const [text, setText] = useState('')
   const run = useRef(0) // increments to cancel an in-flight conversation
 
+  const phaseRef = useRef<Phase>('IDLE')
+  phaseRef.current = phase
+
   useEffect(() => () => stopVoice(), [])
+
+  useEffect(() => {
+    // Don't interrupt a conversation that's already going.
+    if (prompt && phaseRef.current === 'IDLE') startVoice(prompt.text)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prompt?.id])
 
   async function lookUp(q: string, id: number, spoken: boolean) {
     setPhase('LOOKING_UP')
@@ -48,7 +63,7 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
     if (id === run.current) setPhase('IDLE')
   }
 
-  async function startVoice() {
+  async function startVoice(question = 'What are you looking for?') {
     const id = ++run.current
     setError(null)
     setAnswer(null)
@@ -58,7 +73,7 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
       return
     }
     setPhase('PROMPTING')
-    await speak('What are you looking for?') // the mic opens only after the prompt finishes
+    await speak(question) // the mic opens only after the prompt finishes
     if (id !== run.current) return
     setPhase('LISTENING')
     let said: string
@@ -75,6 +90,12 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
     }
     if (id !== run.current) return
     setHeard(said)
+    if (DECLINE.test(said)) {
+      setPhase('RESPONDING')
+      await speak('Okay.')
+      if (id === run.current) setPhase('IDLE')
+      return
+    }
     await lookUp(said, id, true)
   }
 
@@ -101,7 +122,7 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
     <section className="card rounded-[24px] p-3">{/* outer 24 = input 12 + padding 12 */}
       <div className="flex gap-2">
         <button
-          onClick={busy ? stop : startVoice}
+          onClick={busy ? stop : () => startVoice()}
           aria-label={busy ? 'Stop voice assistant' : 'Ask by voice'}
           className="press relative flex h-12 shrink-0 items-center gap-2 rounded-xl bg-ink pr-5 pl-4 font-medium text-white hover:bg-ink/85"
         >

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ScanLine } from 'lucide-react'
 import { api } from './lib/api'
 import type { Health, MoveEvent, QueryResult, Region, TrackedObject } from './lib/api'
@@ -50,11 +50,19 @@ export default function App() {
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const [prompt, setPrompt] = useState<{ id: number; text: string } | null>(null)
+  const leftCount = useRef<number | null>(null) // departures already handled
 
   const refresh = useCallback(async () => {
     try {
       const [h, o, e] = await Promise.all([api.health(), api.objects(), api.events(10)])
       setHealth(h)
+      // Someone just walked out of view: offer help. The first poll only sets the baseline.
+      const left = h.person_left_count ?? 0
+      if (leftCount.current !== null && left > leftCount.current) {
+        setPrompt({ id: left, text: 'Are you looking for something?' })
+      }
+      leftCount.current = left
       setObjects(o)
       setEvents(e)
       setOffline(false)
@@ -138,7 +146,7 @@ export default function App() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <main className="min-w-0 space-y-5">
-          <SearchPanel onResult={onAnswer} />
+          <SearchPanel onResult={onAnswer} prompt={prompt} />
 
           <div className="flex items-center justify-between gap-3">
             {/* Segmented control: inner radius 8 + padding 4 = outer 12 */}
