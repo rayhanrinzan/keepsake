@@ -241,9 +241,9 @@ def test_no_areas_still_gives_honest_locations(db):
 
 
 def test_per_item_confidence_thresholds(clock, db):
-    clock.frames(10, obs("glasses", conf=0.22))  # typical open-vocabulary false hit
-    assert db.get_by_category("glasses") is None
+    clock.frames(10, obs("glasses_case", conf=0.22))  # typical open-vocabulary false hit
+    assert db.get_by_category("glasses_case") is None
     clock.frames(6, obs("keys", pos=(0.5, 0.5), conf=0.32, tid=3))
     assert db.get_by_category("keys")["region"] == "Dresser"
-    assert parse_query("where are my airpods")[0] == "earbuds"
+    assert parse_query("where are my airpods")[0] == "airpods"
     assert parse_query("have you seen my wallet")[0] == "wallet"

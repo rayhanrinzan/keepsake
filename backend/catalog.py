@@ -1,9 +1,12 @@
 """The objects Keepsake remembers. One physical object per category (hackathon assumption).
 
-`category` is the text prompt given to the open-vocabulary detector (YOLO-World), so it can be any
-short description of the object. Short, common words work best: "bottle" scores ~0.7 where
-"water bottle" scores ~0.36 on the same photo. It also keys stored memories (object_id), so
-renaming a category starts that item's memory fresh.
+`category` is the item's internal name and must match the detector's class name: the class in our
+trained model (models/items.pt, made by last-seen/train.py) or the COCO name. It also keys stored
+memories (object_id), so renaming a category starts that item's memory fresh.
+
+`prompt` (optional) is the text given to YOLO-World when it's the fallback detector (no items.pt);
+it defaults to `category`. Short, common words work best: "bottle" scores ~0.7 where "water bottle"
+scores ~0.36 on the same photo. Use probe.py to find the best words for your own items.
 
 `min_conf` is per item: open-vocabulary scores vary a lot by prompt, and a single low cutoff lets
 in false hits (e.g. "glasses"/"wallet" at ~0.2 on photos with neither). Tune these on the live camera.
@@ -17,14 +20,15 @@ CATALOG: list[dict] = [
      "aliases": ["phone", "cell phone", "cellphone", "mobile", "iphone", "smartphone"]},
     {"category": "bottle", "name": "Water Bottle", "icon": "bottle", "min_conf": 0.35,
      "aliases": ["water bottle", "bottle", "drink", "flask"]},
-    {"category": "keys", "name": "Keys", "icon": "keys", "min_conf": 0.3,
+    {"category": "keys", "prompt": "car key", "name": "Keys", "icon": "keys", "min_conf": 0.3,
      "aliases": ["keys", "key", "car keys", "house keys", "keychain"]},
-    {"category": "wallet", "name": "Wallet", "icon": "wallet", "min_conf": 0.3,
-     "aliases": ["wallet", "card holder"]},
-    {"category": "earbuds", "name": "AirPods", "icon": "airpods", "min_conf": 0.3,
+    {"category": "wallet", "prompt": "leather wallet", "name": "Wallet", "icon": "wallet", "min_conf": 0.3,
+     "aliases": ["wallet", "purse", "card holder"]},
+    {"category": "airpods", "prompt": "airpods case", "name": "AirPods", "icon": "airpods", "min_conf": 0.3,
      "aliases": ["airpods", "air pods", "earbuds", "earphones", "headphones", "airpods case"]},
-    {"category": "glasses", "name": "Glasses", "icon": "glasses", "min_conf": 0.3,
-     "aliases": ["glasses", "eyeglasses", "spectacles", "glasses case", "sunglasses"]},
+    {"category": "glasses_case", "prompt": "glasses case", "name": "Glasses", "icon": "glasses",
+     "min_conf": 0.3,
+     "aliases": ["glasses", "eyeglasses", "spectacles", "glasses case", "reading glasses", "sunglasses"]},
     {"category": "laptop", "name": "Laptop", "icon": "laptop", "min_conf": 0.4,
      "aliases": ["laptop", "macbook", "computer", "notebook computer"]},
     {"category": "cup", "name": "Cup", "icon": "cup", "min_conf": 0.35,
