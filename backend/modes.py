@@ -1,7 +1,7 @@
 """Monitoring / Scan room (reposition) mode controller.
 
 MONITORING ──start──► REPOSITIONING ──finish──► CALIBRATING ──regions saved──► READY_TO_RESUME
-    ▲                      │ cancel                (waits for a steady view,          │
+    ▲   (cancel works from any step)                 (waits for a steady view,          │
     └──────────────────────┴──────────────── resume ◄── captures a reference frame) ──┘
 """
 from __future__ import annotations
@@ -40,14 +40,19 @@ class ModeController:
             self.memory.pause()  # no location updates, events or snapshots while the camera moves
             self.mode = REPOSITIONING
 
-    def cancel(self) -> None:
-        """Camera wasn't actually moved: resume in the same view."""
+    def cancel(self) -> bool:
+        """Abandon the scan at any step and resume in the same view with the previous areas.
+
+        Returns True if areas were already saved during this scan (the caller restores them)."""
         with self._lock:
-            if self.mode != REPOSITIONING:
-                raise ModeError("Not repositioning")
+            if self.mode == MONITORING:
+                raise ModeError("No scan in progress")
+            saved = self.mode == READY_TO_RESUME
+            self.reference_jpeg, self.proposal, self._steady = None, [], 0
             self.memory.resume(new_view=False)
             self.reset_tracker = True
             self.mode = MONITORING
+            return saved
 
     def finish(self) -> None:
         with self._lock:

@@ -140,6 +140,11 @@ export function ScanFlow({ health, regions, onSaved, onClose }: {
   const primary = 'press flex h-11 items-center justify-center gap-2 rounded-xl bg-ink px-5 font-medium text-white hover:bg-ink/85 disabled:opacity-50'
   const secondary = 'press flex h-11 items-center justify-center rounded-xl px-4 font-medium text-ink hover:bg-sunken disabled:opacity-50'
   const found = proposal.map((p) => p.name)
+  const cancelButton = (
+    <button disabled={busy} onClick={() => step(() => api.reposition('cancel'))} className={secondary}>
+      Cancel
+    </button>
+  )
 
   return (
     <dialog
@@ -163,7 +168,7 @@ export function ScanFlow({ health, regions, onSaved, onClose }: {
             <LiveFeed health={health} className="aspect-video rounded-xl" />
             <div className="flex flex-wrap gap-2">
               <button disabled={busy} onClick={() => step(() => api.reposition('finish'))} className={primary}>Scan</button>
-              <button disabled={busy} onClick={() => step(() => api.reposition('cancel'))} className={secondary}>Cancel</button>
+              {cancelButton}
             </div>
           </>
         )}
@@ -176,6 +181,7 @@ export function ScanFlow({ health, regions, onSaved, onClose }: {
               Hold the camera still for a moment.
             </p>
             <LiveFeed health={health} className="aspect-video rounded-xl" />
+            <div className="flex flex-wrap gap-2">{cancelButton}</div>
           </>
         )}
 
@@ -220,7 +226,9 @@ export function ScanFlow({ health, regions, onSaved, onClose }: {
             </ul>
             <div className="flex flex-wrap gap-2">
               <button disabled={busy} onClick={save} className={primary}>Save and resume</button>
+              {cancelButton}
             </div>
+            <p className="text-[13px] text-muted">Cancel keeps your previous areas and resumes watching.</p>
           </>
         )}
 

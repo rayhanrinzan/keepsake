@@ -135,3 +135,24 @@ def test_cancel_reposition(api):
     assert c.post("/api/reposition/resume").status_code == 409
     assert c.post("/api/reposition/cancel").json()["mode"] == "MONITORING"
     assert main.memory.view_id == view and not main.memory.paused
+
+
+def test_cancel_from_any_scan_step_keeps_old_areas(api):
+    c, main = api
+    before = c.get("/api/regions").json()
+    view = main.memory.view_id
+    c.post("/api/reposition/start")
+    c.post("/api/reposition/finish")
+    for _ in range(6):  # scan completes, waiting on review
+        main.modes.on_frame(0.0, lambda: (b"jpeg", []))
+    assert c.post("/api/reposition/cancel").json()["mode"] == "MONITORING"
+    assert c.get("/api/regions").json() == before and main.memory.view_id == view
+
+    c.post("/api/reposition/start")
+    c.post("/api/reposition/finish")
+    for _ in range(6):
+        main.modes.on_frame(0.0, lambda: (b"jpeg", []))
+    c.put("/api/regions", json={"regions": [{"name": "Shelf", "camera": [0, 0, 0.5, 0.5]}]})
+    assert c.post("/api/reposition/cancel").json()["mode"] == "MONITORING"
+    assert c.get("/api/regions").json() == before  # saved-but-not-resumed areas rolled back
+    assert c.post("/api/reposition/cancel").status_code == 409

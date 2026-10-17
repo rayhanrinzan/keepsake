@@ -38,6 +38,7 @@ snapshots = SnapshotStore(db, env("SNAPSHOT_DIR", str(HERE / "data" / "snapshots
                           retention=int(env("SNAPSHOT_RETENTION", "20")),
                           cooldown_seconds=float(env("SNAPSHOT_COOLDOWN", "3")))
 modes = ModeController(memory)
+_regions_before: list = []  # areas when the current scan started
 worker = None
 
 
@@ -218,12 +219,23 @@ def _mode_call(fn):
 
 @app.post("/api/reposition/start")
 def reposition_start():
-    return _mode_call(modes.start)
+    status = _mode_call(modes.start)
+    _regions_before[:] = list(regions)  # restored if the scan is cancelled after saving
+    return status
 
 
 @app.post("/api/reposition/cancel")
 def reposition_cancel():
-    return _mode_call(modes.cancel)
+    """Leave Scan room from any step; the room areas go back to what they were before it."""
+    try:
+        areas_changed = modes.cancel()
+    except ModeError as e:
+        raise HTTPException(409, str(e)) from e
+    if areas_changed:
+        regions[:] = _regions_before
+        if env("REGIONS_READONLY", "0") != "1":
+            save_regions(regions)
+    return modes.status()
 
 
 @app.post("/api/reposition/finish")
