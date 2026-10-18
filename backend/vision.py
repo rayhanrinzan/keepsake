@@ -111,7 +111,7 @@ class VisionWorker(threading.Thread):
                  model_path: str = "yolov8s-worldv2.pt", conf: float = 0.15, fps: float = 5.0,
                  frame_width: int = 1280, device: str | None = None, preview_width: int = 640,
                  presence: PresenceTracker | None = None, camera_name: str | None = None,
-                 hands_enabled: bool = True, frozen_seconds: float = 5.0):
+                 hands_enabled: bool = True, frozen_seconds: float = 5.0, verify_enabled: bool = True):
         super().__init__(daemon=True, name="vision")
         self.memory = memory
         self.snapshots = snapshots
@@ -130,6 +130,8 @@ class VisionWorker(threading.Thread):
         self.interactions = InteractionDetector("wearable")      # issue #5: hand evidence
         self.hands_enabled = hands_enabled
         self.hands = None  # hands.HandDetector, created on the worker thread
+        self.verify_enabled = verify_enabled
+        self.verifier = None  # verify.ClipVerifier: second opinion on every item box
         self._ring: deque[tuple[int, np.ndarray]] = deque(maxlen=12)  # (frame_id, snapshot-size frame)
         self._frame_id = 0
         self._still_frames = 0  # consecutive frames with exactly zero change: a frozen feed
@@ -143,6 +145,7 @@ class VisionWorker(threading.Thread):
                        "motion": 0.0, "detections": [], "model": model_path,
                        "camera_mode": "wearable", "camera_motion": 0.0,
                        "hands": "off", "hands_reason": None, "interactions": {},
+                       "verify": "off", "verify_dropped": 0,
                        **self.presence.status()}
 
     # ---- public ----
@@ -172,10 +175,17 @@ class VisionWorker(threading.Thread):
                 self._items_model = YOLO(str(items_path))
                 log.info("custom items model %s: %s", items_path.name, list(self._items_model.names.values()))
             custom = (set(self._items_model.names.values()) - NOT_TRAINED) if self._items_model else set()
+            if self.verify_enabled:
+                from verify import ClipVerifier
+                self.verifier = ClipVerifier(self.device)
+                self.status.update(verify="on" if self.verifier.available else "unavailable")
+            # With the CLIP check catching look-alikes, YOLO-World also proposes the trained items as a
+            # backup (it found a real wallet the trained model missed); without it, it skips them.
+            verified = self.verifier is not None and self.verifier.available
             if "world" in str(self.model_path).lower():  # open vocabulary: tell it what to look for
                 from catalog import CATALOG
                 try:
-                    model.set_classes([c for c in SUPPORTED if c not in custom] + [PERSON, HAND])
+                    model.set_classes([c for c in SUPPORTED if verified or c not in custom] + [PERSON, HAND])
                 except ImportError as e:  # YOLO-World encodes the prompts with CLIP
                     raise RuntimeError(
                         "YOLO-World needs CLIP: run .venv/bin/pip install -r backend/requirements.txt") from e
@@ -259,6 +269,10 @@ class VisionWorker(threading.Thread):
         hands = []
         try:
             obs = self._detect(model, frame, class_ids) + self._detect_items(frame)
+            if self.verifier is not None:
+                before = len(obs)
+                obs = self.verifier.keep(frame, obs)
+                self.status["verify_dropped"] = before - len(obs)
             for o in obs:
                 o.motion = self.motion.local(o.bbox)
             if self.presence.update(obs) == "left":

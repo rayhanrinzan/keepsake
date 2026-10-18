@@ -67,7 +67,8 @@ async def lifespan(_: FastAPI):
                               fps=float(env("INFERENCE_FPS", "5")),
                               frame_width=int(env("INFERENCE_WIDTH", "1280")),
                               device=env("DEVICE", "") or None,
-                              hands_enabled=env("HANDS", "1") == "1")
+                              hands_enabled=env("HANDS", "1") == "1",
+                              verify_enabled=env("VERIFY", "1") == "1")  # CLIP second opinion
         worker.start()
     if env("REMINDERS_THREAD", "1") == "1":
         reminders.start()  # its own thread: never blocks the camera loop
