@@ -1,17 +1,15 @@
 import { router, useLocalSearchParams } from 'expo-router'
-import { ChevronLeft, Volume2 } from 'lucide-react-native'
+import { ChevronLeft, MapPin } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
-import { Image, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native'
+import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Aura } from '../../components/Aura'
 import { CenterType } from '../../components/CenterType'
-import { GlassPill } from '../../components/GlassPill'
 import { T } from '../../components/ui'
 import { ago, getObjects, imageUrl } from '../../lib/api'
 import type { TrackedObject } from '../../lib/api'
 import { itemPhoto } from '../../lib/items'
 import { useSettings } from '../../lib/settings'
-import { O } from '../../lib/theme'
+import { P } from '../../lib/theme'
 import { speak } from '../../lib/voice'
 
 function sentence(o: TrackedObject) {
@@ -26,18 +24,14 @@ function sentence(o: TrackedObject) {
 export default function Locate() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const inset = useSafeAreaInsets()
-  const { height: h } = useWindowDimensions()
   const { s: prefs } = useSettings()
   const [o, setO] = useState<TrackedObject | null | undefined>(undefined)
-  const [talking, setTalking] = useState(false)
   const [round, setRound] = useState(0)
+  const [snap, setSnap] = useState(false)
 
   function sayIt(item: TrackedObject) {
-    setTalking(true)
     setRound(r => r + 1)
-    const text = sentence(item)
-    speak(text, prefs, () => setTalking(false))
-    setTimeout(() => setTalking(false), 900 + text.length * 65)
+    speak(sentence(item), prefs)
   }
 
   useEffect(() => {
@@ -52,33 +46,36 @@ export default function Locate() {
 
   return (
     <View style={s.page}>
-      <Aura height={h * 0.5} center={h * 0.27} energy={talking ? 0.35 : 0} strength={0.6} />
       <ScrollView contentContainerStyle={[s.body, { paddingTop: inset.top + 16, paddingBottom: inset.bottom + 32 }]} showsVerticalScrollIndicator={false}>
         <View style={s.head}>
-          <GlassPill onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} label="Back to my items" style={s.back}>
-            <ChevronLeft size={22} color={O.text} />
-            <T size={16} weight="medium" color={O.text}>My Items</T>
-          </GlassPill>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} accessibilityRole="button" accessibilityLabel="Back to my items" style={({ pressed }) => [s.back, pressed && s.pressed]}>
+            <ChevronLeft size={20} color={P.line} />
+            <T size={16} weight="medium" color={P.line}>My Items</T>
+          </Pressable>
           <Image source={require('../../../assets/inside-icon.png')} style={s.logo} accessibilityLabel="Keepsake" resizeMode="contain" />
         </View>
 
-        {o === null && <T size={20} color={O.text} style={{ textAlign: 'center', marginTop: 80 }}>I can't find that item right now.</T>}
+        {o === null && <T size={20} color={P.line} style={{ textAlign: 'center', marginTop: 80 }}>I can't find that item right now.</T>}
         {o && (
           <>
             <View style={s.hero}>
-              <Image source={itemPhoto(o.icon)} style={s.photo} resizeMode="contain" />
-              <T size={34} weight="medium" color={O.text}>{o.name}</T>
+              {/* Tap the photo to see the last picture the camera took of it, when there is one. */}
+              <Pressable onPress={() => o.snapshot && setSnap(v => !v)} disabled={!o.snapshot} accessibilityRole={o.snapshot ? 'button' : undefined}
+                accessibilityLabel={o.snapshot ? (snap ? `Show the picture of your ${o.name.toLowerCase()}` : `Show where your ${o.name.toLowerCase()} was last seen`) : undefined}
+                style={[s.frame, snap && s.frameSnap]}>
+                {snap && o.snapshot
+                  ? <Image source={{ uri: imageUrl(o.snapshot.image_url) }} style={StyleSheet.absoluteFill} resizeMode="cover" accessibilityLabel={`Last photo of your ${o.name.toLowerCase()}`} />
+                  : <Image source={itemPhoto(o.icon)} style={s.photo} resizeMode="contain" />}
+              </Pressable>
+              <T size={34} weight="medium" color={P.line}>{o.name}</T>
+              <View style={s.place}>
+                <MapPin size={18} color={P.soft} />
+                <T size={18} color={P.soft}>{o.region ?? 'Not seen yet'}</T>
+              </View>
             </View>
             <View style={s.said}>
-              <CenterType key={round} text={sentence(o)} size={24} color={O.text} />
+              <CenterType key={round} text={sentence(o)} size={24} color={P.line} />
             </View>
-            {o.snapshot && (
-              <Image source={{ uri: imageUrl(o.snapshot.image_url) }} style={s.snap} accessibilityLabel={`Last photo of your ${o.name.toLowerCase()}`} />
-            )}
-            <GlassPill onPress={() => sayIt(o)} label="Say it again" style={s.again}>
-              <Volume2 size={22} color={O.text} />
-              <T size={18} weight="medium" color={O.text}>Say it again</T>
-            </GlassPill>
           </>
         )}
       </ScrollView>
@@ -87,14 +84,16 @@ export default function Locate() {
 }
 
 const s = StyleSheet.create({
-  page: { flex: 1, backgroundColor: O.page },
+  page: { flex: 1, backgroundColor: '#000000' },
   body: { paddingHorizontal: 22, gap: 24 },
   head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  back: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 44, paddingLeft: 10, paddingRight: 18 },
+  back: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 42, paddingLeft: 8, paddingRight: 16, borderWidth: 1, borderColor: P.faint, borderRadius: P.radius },
+  pressed: { backgroundColor: 'rgba(255,255,255,0.12)' },
   logo: { width: 40, height: 22 },
-  hero: { alignItems: 'center', gap: 6, marginTop: 40 },
-  photo: { width: 200, height: 130 },
+  hero: { alignItems: 'center', gap: 14, marginTop: 36 },
+  frame: { width: 240, height: 160, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: P.radius, overflow: 'hidden' },
+  frameSnap: { width: '100%', height: undefined, aspectRatio: 4 / 3 },
+  place: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: -6 },
+  photo: { width: 190, height: 120 },
   said: { minHeight: 96, justifyContent: 'center', paddingHorizontal: 6 },
-  snap: { width: '100%', aspectRatio: 4 / 3, borderRadius: 28, borderWidth: 1, borderColor: O.rim },
-  again: { flexDirection: 'row', alignItems: 'center', gap: 10, alignSelf: 'center', height: 54, paddingHorizontal: 26 },
 })

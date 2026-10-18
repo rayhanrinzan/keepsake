@@ -28,6 +28,7 @@ export const C = {
 }
 
 export const F = {
+  light: 'MPLUS1_200ExtraLight',
   regular: 'MPLUS1_300Light',
   medium: 'MPLUS1_400Regular',
   semibold: 'MPLUS1_500Medium',
@@ -62,4 +63,19 @@ export const O = {
   row: '#e6e6e6',
   ink: '#151515',
   inkSoft: '#6e6e6e',
+}
+
+// The blueprint look: deep blueprint-blue paper with a fine white grid, everything drawn in thin
+// white lines with square corners, and a white bar at the bottom for their things.
+export const P = {
+  paper: '#1656ad',
+  paperDeep: '#124a96', // the edges of the sheet
+  line: '#ffffff',
+  soft: 'rgba(255,255,255,0.72)',
+  faint: 'rgba(255,255,255,0.4)',
+  sheet: '#ffffff',
+  ink: '#123c78', // dark blueprint ink on the white bar
+  muted: '#6b7d93',
+  rule: '#c7d6ea', // thin outlines on the white bar
+  radius: 4,
 }

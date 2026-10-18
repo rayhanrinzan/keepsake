@@ -23,7 +23,7 @@ export const objects: TrackedObject[] = [
   item('wallet', 'Wallet', 'wallet', 'Coat pocket', 180),
   item('airpods', 'AirPods', 'airpods', 'Desk', 25, true),
   item('bottle', 'Water bottle', 'bottle', 'Kitchen table', 70),
-  item('remote', 'TV remote', 'remote', null, null),
+  item('bag', 'Bag', 'backpack', null, null),
 ]
 
 export const profile: Profile = {
