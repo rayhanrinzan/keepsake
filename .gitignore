@@ -31,8 +31,9 @@ runs/
 
 # model weights (downloaded on first run)
 *.pt
-# ...except our trained items model, shared with the team (see CLAUDE.md)
+# ...except our trained items models, shared with the team (see CLAUDE.md)
 !backend/models/items.pt
+!backend/models/items_room.pt
 *.onnx
 
 # misc

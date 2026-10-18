@@ -18,7 +18,8 @@ also binds port 8000, so run one or the other.
   match the trained model's class names.
 - `backend/vision.py`: `VisionWorker` thread. Camera (by name via `cameras.py`, or index) → 1280 px →
   `MotionDetector` → YOLO-World track (`set_classes(catalog + person + hand)`) plus `models/items.pt`
-  (trained keys/wallet/AirPods/glasses, committed) → `memory.observe` → wearable observer and
+  and `models/items_room.pt` (trained keys/wallet/AirPods/glasses, committed; each item keeps its
+  strongest box across both) → `memory.observe` → wearable observer and
   `InteractionDetector` with hands = MediaPipe ∪ YOLO-World "hand" (`merge_hands`). Records
   observation events + photos, MJPEG preview, black-frame/camera-shift warnings, `hands_in_view`.
 - `backend/events.py` (stdlib only): observation event contract (`object_observed`,
@@ -93,8 +94,9 @@ cd lastseen-wearable && .venv/bin/python -m pytest   # Roman's app, its own venv
 - Never fabricate detections, photos or locations in live mode. Synthetic data belongs only in tests.
   Never turn a screen position into a room location; there are no room areas.
 - Never commit DBs, photos, frames, weights or secrets (`backend/data/`, `*.pt`, `*.task`, `.env`).
-  **One exception:** `backend/models/items.pt` is committed so the team shares the trained model
-  (agreed in PR #10). Keep it the only weights file in git.
+  **Exceptions:** `backend/models/items.pt` (PR #10) and `backend/models/items_room.pt` (Amanda's
+  room-trained model, loaded alongside it) are committed so the team shares the trained models. Keep
+  them the only weights files in git.
 - Seeing an item somewhere else on screen is never a movement event.
 - Reminders are off until an explicit opt-in; hand proximity is never contact; wording is "last seen".
 - Work happens on feature branches. Don't push to main or merge without approval. `integration/merge-all`
