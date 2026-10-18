@@ -64,6 +64,29 @@ export async function ask(text: string): Promise<Answer> {
   return r.json()
 }
 
+/** The voice chosen on the Keepsake (the web dashboard's Settings → Customize voice). */
+export interface VoiceConfig {
+  provider: 'grok' | 'browser'
+  voice_id: string
+  speed: number
+}
+
+export async function getVoice(): Promise<VoiceConfig> {
+  if (SAMPLE) return { provider: 'browser', voice_id: 'eve', speed: 1 }
+  return get('/api/voice')
+}
+
+/** One sentence in the Grok voice, as MP3. The xAI key stays on the laptop. */
+export async function tts(text: string): Promise<Blob> {
+  const r = await fetch(`${BASE}/api/tts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  if (!r.ok) throw new Error(`tts ${r.status}`)
+  return r.blob()
+}
+
 // The caretaker side doesn't exist yet, so in live mode these come back empty and the screens say so.
 export async function getProfile(): Promise<Profile | null> {
   return SAMPLE ? sample.profile : null

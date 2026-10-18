@@ -56,6 +56,17 @@ export function SettingsSidebar({ open, onClose }: { open: boolean; onClose: () 
             )
           })}
         </View>
+
+        <T size={14} color={P.soft} style={{ marginTop: 28, marginBottom: 12 }}>Hands-free</T>
+        <Pressable onPress={() => set({ handsFree: !prefs.handsFree })} accessibilityRole="switch" accessibilityState={{ checked: prefs.handsFree }}
+          accessibilityLabel="Listen for where is my. Say “where are my keys?” any time and Keepsake answers, no tapping."
+          style={({ pressed }) => [s.option, prefs.handsFree && s.optionOn, pressed && s.pressed]}>
+          <View style={[s.box, prefs.handsFree && s.dotOn]} />
+          <View style={{ flex: 1, gap: 4 }}>
+            <T size={18} weight="medium" color={P.line}>Listen for “where is my…”</T>
+            <T size={14} color={P.soft}>Say “where are my keys?” any time and Keepsake answers, no tapping.</T>
+          </View>
+        </Pressable>
       </Animated.View>
     </View>
   )
@@ -70,5 +81,6 @@ const s = StyleSheet.create({
   option: { flexDirection: 'row', gap: 14, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', borderRadius: P.radius },
   optionOn: { borderColor: '#ffb27a', backgroundColor: 'rgba(255,178,122,0.08)' },
   dot: { width: 18, height: 18, marginTop: 3, borderRadius: 9, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.5)' },
-  dotOn: { borderColor: '#ffb27a', backgroundColor: '#ffb27a' },
+  box: { width: 18, height: 18, marginTop: 3, borderRadius: 4, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.5)' },
+  dotOn: {borderColor: '#ffb27a', backgroundColor: '#ffb27a' },
 })

@@ -1,7 +1,7 @@
 import { router } from 'expo-router'
 import { BellRing, Keyboard, Mic, Volume2 } from 'lucide-react-native'
 import { useEffect, useId, useRef, useState } from 'react'
-import { Image, Linking, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native'
+import { Image, Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg'
 import { CenterType } from '../components/CenterType'
@@ -16,12 +16,16 @@ import { itemPhoto } from '../lib/items'
 import { canMeasure, measure } from '../lib/level'
 import { CHECK_IN, useSettings } from '../lib/settings'
 import { F, P } from '../lib/theme'
-import { canListen, listen, speak, stillSpeaking, stopSpeaking } from '../lib/voice'
+import { canListen, listen, pauseWake, resumeWake, speak, startWakeListener, stillSpeaking, stopSpeaking, stopWakeListener, unlockSpeech } from '../lib/voice'
+import type { WakeState } from '../lib/voice'
 
 type Mode = 'idle' | 'listening' | 'thinking' | 'speaking' | 'answered'
 const PROMPT = 'Speak to me. What do you need?'
 const INVITE = "Tell me what you're looking for."
 const CHECK = "Are you forgetting something? Tap the microphone and tell me what you're looking for."
+const LOST = 'Are you looking for something?'
+const LOST_ASK_MS = 10_000 // an item out of view this long gets LOST, once, like the web dashboard
+const POLL_MS = 2000
 const INK = '#111111' // black text on the white items bar
 const MUTED = '#6b6b6b'
 let unfolded = false // the blueprint opens once each time the app starts
@@ -54,13 +58,75 @@ export default function Home() {
   const on = useRef(false) // the microphone stays on, conversation after conversation, until they turn it off
   const turn = useRef(0) // bumped when the microphone is turned off, so an answer still on its way is dropped
   const voice = canListen()
+  const [unlocked, setUnlocked] = useState(Platform.OS !== 'web')
+  const goneSince = useRef<Record<string, number>>({}) // item -> when it left the view (ms); 0 = in view
+  const asked = useRef<Set<string>>(new Set()) // items already asked about since they left
+  const onLost = useRef<() => void>(() => {})
 
   useEffect(() => {
-    const load = () => getObjects().then(o => { setItems(o); setError(false) }).catch(() => setError(true))
+    const load = () => getObjects().then(o => { setItems(o); setError(false); watch(o) }).catch(() => setError(true))
     load()
-    const t = setInterval(load, 5000)
+    const t = setInterval(load, POLL_MS)
     return () => { clearInterval(t); on.current = false; stop.current?.(); stopSpeaking() }
   }, [])
+
+  // An item that was in view and has stayed out of view for LOST_ASK_MS: ask out loud once. Only items
+  // seen in view while the app is open count, and seeing one again re-arms it.
+  function watch(list: TrackedObject[]) {
+    const t = Date.now()
+    let due = false
+    for (const o of list) {
+      const since = goneSince.current[o.object_id]
+      if (o.visible) {
+        goneSince.current[o.object_id] = 0
+        asked.current.delete(o.object_id)
+      } else if (since === 0) {
+        goneSince.current[o.object_id] = t
+      } else if (since && t - since >= LOST_ASK_MS && !asked.current.has(o.object_id)) {
+        asked.current.add(o.object_id)
+        due = true
+      }
+    }
+    if (due) onLost.current()
+  }
+  onLost.current = () => {
+    if (intro || prefs.assist === 'less' || on.current) return
+    if (now.current !== 'idle' && now.current !== 'answered') return
+    stop.current?.()
+    setHeard('')
+    say(LOST, voice ? hearOnce : () => { setTyping(true); setMode('idle'); resumeWake() })
+  }
+
+  // Browsers only let a page speak and listen on its own after one tap or key press.
+  useEffect(() => {
+    if (unlocked) return
+    const unlock = () => { unlockSpeech(); setUnlocked(true) }
+    window.addEventListener('pointerdown', unlock, { once: true })
+    window.addEventListener('keydown', unlock, { once: true })
+    return () => { window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock) }
+  }, [unlocked])
+
+  // Hands-free: "where are my keys" (or "hey Keepsake") starts a lookup, like a smart speaker.
+  const onWake = useRef<(said: string) => void>(() => {})
+  const [wake, setWake] = useState<WakeState>('off')
+  // A line under the buttons, so it's clear whether Keepsake is listening for "where is my…".
+  const wakeLine = !voice || !prefs.handsFree || intro ? null
+    : !unlocked ? 'Tap anywhere to turn on hands-free'
+    : wake === 'blocked' ? 'Allow the microphone to use hands-free'
+    : wake === 'listening' ? 'Listening for “where is my…”'
+    : null
+  onWake.current = said => {
+    if (on.current) return // the microphone button is already listening
+    stop.current?.()
+    setTyping(false)
+    setHeard(said)
+    reply(said)
+  }
+  useEffect(() => {
+    if (!prefs.handsFree || !unlocked || intro || !voice) return
+    startWakeListener(said => onWake.current(said), setWake)
+    return () => stopWakeListener()
+  }, [prefs.handsFree, unlocked, intro, voice])
 
   // The voice line follows the microphone while it listens.
   useEffect(() => {
@@ -96,13 +162,14 @@ export default function Home() {
   }
 
   function say(text: string, then?: () => void) {
+    pauseWake() // so it doesn't hear itself
     setSaid(text)
     setMode('speaking')
     let done = false
     const finish = () => {
       if (done) return
       done = true
-      then ? then() : setMode('answered')
+      then ? then() : settle()
     }
     speak(text, prefs, finish)
     // In case the browser never says it finished: check whether it's still talking, and only move on
@@ -117,7 +184,27 @@ export default function Home() {
     const a = await answer(q)
     if (mine !== turn.current) return
     // With the microphone on, it goes straight back to listening after answering.
-    say(a.text, () => (on.current ? hear() : setMode('answered')))
+    say(a.text, () => (on.current ? hear() : settle()))
+  }
+
+  // The conversation is over: back to listening for "where is my…" in the background.
+  function settle(m: Mode = 'answered') {
+    setMode(m)
+    resumeWake()
+  }
+
+  // Listen for one answer (after "Are you looking for something?"), then go back to waiting.
+  function hearOnce() {
+    setHeard('')
+    setMode('listening')
+    let got = false
+    stop.current = listen(
+      (text, final) => {
+        setHeard(text)
+        if (final && !got) { got = true; reply(text) }
+      },
+      () => { if (!got) settle('idle') },
+    )
   }
 
   // Listen for one question. The browser stops listening after a quiet spell, so while the
@@ -136,7 +223,7 @@ export default function Home() {
       () => {
         if (got) return
         if (on.current) setTimeout(() => on.current && hear(), 300)
-        else setMode(m => (m === 'listening' ? 'idle' : m))
+        else { setMode(m => (m === 'listening' ? 'idle' : m)); resumeWake() }
       },
     )
   }
@@ -153,7 +240,7 @@ export default function Home() {
       turn.current++
       stop.current?.()
       stopSpeaking()
-      return setMode('idle')
+      return settle('idle')
     }
     stopSpeaking()
     stop.current?.()
@@ -161,7 +248,7 @@ export default function Home() {
     if (!voice) {
       // On a phone without speech to text yet, it asks out loud and they type the answer.
       setTyping(true)
-      return say(PROMPT, () => setMode('idle'))
+      return say(PROMPT, () => settle('idle'))
     }
     mic(true)
     // With less help it just listens; otherwise Keepsake asks first.
@@ -258,6 +345,12 @@ export default function Home() {
             </Pressable>
           </View>
           </View>
+          <View style={s.wake}>
+            {wakeLine && <>
+              {wake === 'listening' && unlocked && <View style={s.wakeDot} />}
+              <T size={13} weight="light" color={P.soft}>{wakeLine}</T>
+            </>}
+          </View>
         </View>
 
         <View style={[s.panel, { paddingBottom: inset.bottom + 32 }]}>
@@ -295,6 +388,8 @@ const s = StyleSheet.create({
   said: { minHeight: 44, alignItems: 'center', justifyContent: 'flex-start', gap: 8, paddingHorizontal: 12, marginTop: 36 },
   input: { width: 300, height: 44, paddingHorizontal: 16, fontSize: 16, fontFamily: F.round, color: P.line, borderWidth: 1, borderColor: P.faint, borderRadius: P.radius },
   mic: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: '#ffffff' },
+  wake: { minHeight: 20, marginTop: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  wakeDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#ffb27a' },
   micRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 28 },
   side: { width: 46, height: 46 },
   sideBtn: { borderRadius: 23, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: '#ffffff' },
