@@ -68,7 +68,9 @@ export interface Reminder {
 
 // Sample mode is for design work only (npm run sample). Live mode never makes anything up.
 export const SAMPLE = process.env.EXPO_PUBLIC_SAMPLE === '1'
-const BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '')
+// 'same-origin': the app is served next to the API (scripts/serve_mobile.py, e.g. through a tunnel).
+const API = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000'
+const BASE = API === 'same-origin' ? '' : API.replace(/\/$/, '')
 
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(`${BASE}${path}`)
