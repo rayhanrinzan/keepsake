@@ -136,7 +136,8 @@ class VisionWorker(threading.Thread):
         self._ring: deque[tuple[int, np.ndarray]] = deque(maxlen=12)  # (frame_id, snapshot-size frame)
         self._frame_id = 0
         self._photo_at: dict[str, float] = {}  # category -> monotonic time of its last thumbnail
-        self._still_frames = 0  # consecutive frames with exactly zero change: a frozen feed
+        self._still_frames = 0  # consecutive pixel-identical frames: a frozen feed
+        self._last_sample: np.ndarray | None = None
         self._frozen_frames = max(1, int(frozen_seconds * fps))
         self._halt = threading.Event()
         self._jpeg: bytes | None = None
@@ -257,9 +258,12 @@ class VisionWorker(threading.Thread):
 
         global_motion = self.motion.update(frame)
         self.status["motion"] = round(global_motion, 3)
-        # Real sensors always have some noise; exactly zero change for seconds is a frozen feed
-        # (Continuity Camera pauses while the iPhone is unlocked or in use).
-        self._still_frames = self._still_frames + 1 if global_motion == 0.0 else 0
+        # A paused feed (Continuity Camera while the iPhone is unlocked or in use) repeats the same
+        # frame pixel for pixel; a live sensor never does, even when the scene is perfectly still.
+        sample = frame[::16, ::16]
+        same = self._last_sample is not None and np.array_equal(sample, self._last_sample)
+        self._last_sample = sample.copy()
+        self._still_frames = self._still_frames + 1 if same else 0
         warning = None
         if float(frame[::8, ::8].mean()) < 8:  # e.g. Continuity Camera paused or lens covered
             warning = "The camera is sending black frames. Check the lens isn't covered."

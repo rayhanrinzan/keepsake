@@ -101,3 +101,29 @@ def test_thumbnail_keeps_up_with_last_seen_on_a_moving_camera(mem, store, db, mo
     store.flush()
     taken = db.get_snapshots("wallet_01")
     assert len(taken) == 2 and {s["event_type"] for s in taken} == {"seen"}  # at ~0.4 s and ~8.4 s
+
+
+def test_frozen_feed_means_identical_frames_not_a_still_scene():
+    """A still phone on a table can measure zero motion; only repeated identical frames are frozen."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    import vision
+    w = SimpleNamespace(_still_frames=0, _last_sample=None)
+    rng = np.random.default_rng(0)
+    still = np.full((360, 640, 3), 120, np.uint8)
+
+    def feed(frame):
+        sample = frame[::16, ::16]
+        same = w._last_sample is not None and np.array_equal(sample, w._last_sample)
+        w._last_sample = sample.copy()
+        w._still_frames = w._still_frames + 1 if same else 0
+
+    for _ in range(30):  # live sensor: tiny noise every frame, even on a still scene
+        feed(np.clip(still.astype(int) + rng.integers(-2, 3, still.shape), 0, 255).astype(np.uint8))
+    assert w._still_frames == 0
+    for _ in range(30):  # paused feed: the same frame again and again
+        feed(still)
+    assert w._still_frames >= 25
+    assert "np.array_equal(sample, self._last_sample)" in open(vision.__file__).read()
