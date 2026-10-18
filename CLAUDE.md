@@ -43,6 +43,9 @@ also binds port 8000, so run one or the other.
 - Also: `snapshots.py` (JPEG writer, retention, dedupe), `database.py` (SQLite: objects, snapshots,
   observations, settings; the legacy `events` table and region columns are no longer written).
 - `vision.py` warns on black frames and on a frozen feed (exactly zero change for 5 s).
+- `backend/verify.py`: `ClipVerifier` second opinion on keys/wallet/AirPods/glasses boxes (item vs its
+  look-alikes, from real false hits); verdicts cached 1 s per item; when on, YOLO-World also proposes the
+  trained items as a backup. `CTRLF_VERIFY=0` disables it; if CLIP can't load, boxes pass unchanged.
 - `frontend/src`: React 19, Vite, Tailwind 4. Amy's layout: `Sidebar` (Items / Settings; bottom bar on
   phones). Items: `SearchPanel` (voice, hands-free wake phrase, typed), `CameraPanel`, `ObjectList`,
   `ObjectDetail`, `ActivityFeed`. Settings: `CameraPanel`, `PrivacyPanel`, `SettingsDialog` (Customize
