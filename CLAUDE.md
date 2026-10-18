@@ -39,13 +39,17 @@ also binds port 8000, so run one or the other.
   frozen or disconnected camera cancels. Queued alerts are claimed and re-validated before delivery.
 - `backend/presence.py` (Roman): person presence; its counter is reported as 0 (other people leaving a
   worn camera's view isn't the wearer leaving).
+- `backend/describe.py`: `SceneDescriber`: on a lookup, the item's newest photo (box drawn on) goes to a
+  Grok vision model for one sentence of reference points ("It was on a green seat next to…"); cached per
+  photo; any failure means no sentence. `CTRLF_DESCRIBE=0` off. `scripts/try_describe.py` tries it.
 - `backend/voice.py`: Grok TTS (`XAI_API_KEY`), `/api/voice`, `/api/tts`.
 - Also: `snapshots.py` (JPEG writer, retention, dedupe), `database.py` (SQLite: objects, snapshots,
   observations, settings; the legacy `events` table and region columns are no longer written).
 - `vision.py` warns on black frames and on a frozen feed (exactly zero change for 5 s).
-- `backend/verify.py`: `ClipVerifier` second opinion on keys/wallet/AirPods/glasses boxes (item vs its
+- `backend/verify.py`: `ClipVerifier` second opinion on every item's boxes (all six) (item vs its
   look-alikes, from real false hits); verdicts cached 1 s per item; when on, YOLO-World also proposes the
   trained items as a backup. `CTRLF_VERIFY=0` disables it; if CLIP can't load, boxes pass unchanged.
+  `big_enough` first drops item boxes under `CTRLF_MIN_ITEM_AREA` (0.004) of the frame.
 - `frontend/src`: React 19, Vite, Tailwind 4. Amy's layout: `Sidebar` (Items / Settings; bottom bar on
   phones). Items: `SearchPanel` (voice, hands-free wake phrase, typed), `CameraPanel`, `ObjectList`,
   `ObjectDetail`, `ActivityFeed`. Settings: `CameraPanel`, `PrivacyPanel`, `SettingsDialog` (Customize

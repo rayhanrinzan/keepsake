@@ -93,3 +93,9 @@ def store(db, tmp_path):
 @pytest.fixture
 def frame():
     return np.full((360, 640, 3), 128, np.uint8)
+
+
+@pytest.fixture(autouse=True)
+def _no_vision_calls(monkeypatch):
+    """Never send photos to xAI from tests (the repo .env may hold a real key)."""
+    monkeypatch.setenv("CTRLF_DESCRIBE", "0")

@@ -156,8 +156,9 @@ def spoken_time(iso: str, now: datetime | None = None) -> str:
     return f"on {t.strftime('%b')} {t.day} at {clock}"
 
 
-def answer_query(text: str, lookup) -> dict:
-    """Grounded answer. `lookup(category)` returns the canonical object view (main.object_view)."""
+def answer_query(text: str, lookup, describe=None) -> dict:
+    """Grounded answer. `lookup(category)` returns the canonical object view (main.object_view).
+    `describe(obj, noun)` may return one sentence about what's around the item in its last photo."""
     parsed = parse_query(text)
     if not parsed:
         names = [c["name"].lower() for c in CATALOG]
@@ -171,7 +172,11 @@ def answer_query(text: str, lookup) -> dict:
         return {"found": False, "object": obj, "category": category,
                 "answer": f"I haven't seen your {noun} yet."}
     answer = f"I last saw your {noun} {spoken_time(obj['last_seen'])}."
+    surroundings = describe(obj, noun) if describe and obj.get("snapshot") else None
+    if surroundings:
+        answer += f" {surroundings}"
     if obj.get("snapshot"):
         answer += " The last photo is in Keepsake."
     answer += " It's in view right now." if obj.get("visible") else " It may have moved since."
-    return {"found": True, "object": obj, "category": category, "answer": answer}
+    return {"found": True, "object": obj, "category": category, "answer": answer,
+            "surroundings": surroundings}

@@ -68,10 +68,47 @@ export function listenOnce(onInterim?: (text: string) => void): Promise<string> 
 // ---- speaking: the Grok voice (via the backend, so the key stays server-side) or the browser's ----
 
 let config: VoiceConfig = { provider: 'browser', voice_id: 'eve', speed: 1 }
+let configLoaded = false // until the saved settings arrive, `config` is only a placeholder
 
 /** Called when voice settings load or change. */
 export function setVoiceConfig(c: VoiceConfig) {
   config = c
+  configLoaded = true
+}
+
+/** The saved voice settings. If they never loaded (e.g. the backend was restarting when the page
+ *  opened), fetch them now instead of quietly speaking in the browser voice for the whole session. */
+async function currentConfig(): Promise<VoiceConfig> {
+  if (!configLoaded) {
+    try {
+      const v = await api.voice()
+      setVoiceConfig({ provider: v.provider, voice_id: v.voice_id, speed: v.speed })
+    } catch {
+      /* backend unreachable: use what we have */
+    }
+  }
+  return config
+}
+
+// Recent Grok audio by text + voice + speed: repeated lines ("Are you looking for something?") play
+// instantly and don't depend on the network each time.
+const ttsCache = new Map<string, Blob>()
+
+async function grokAudio(text: string, voice_id: string, speed: number): Promise<Blob> {
+  const key = `${voice_id}|${speed}|${text}`
+  const hit = ttsCache.get(key)
+  if (hit) return hit
+  let blob: Blob
+  try {
+    blob = await api.tts(text, { voice_id, speed })
+  } catch (e) {
+    if (e instanceof Error && 'status' in e && (e as { status: number }).status === 503) throw e // no key
+    await new Promise((r) => setTimeout(r, 400)) // one retry: a single slow or failed request
+    blob = await api.tts(text, { voice_id, speed }) //   shouldn't switch to the browser voice
+  }
+  ttsCache.set(key, blob)
+  if (ttsCache.size > 40) ttsCache.delete(ttsCache.keys().next().value as string)
+  return blob
 }
 
 let player: HTMLAudioElement | null = null
@@ -136,12 +173,13 @@ function stopAudio() {
  * browser voice so a conversation never goes silent. `strict` (Settings preview) throws instead.
  */
 export async function speak(text: string, opts: Partial<VoiceConfig> & { strict?: boolean } = {}): Promise<void> {
-  const c = { ...config, ...opts }
   const seq = ++speakSeq
   stopAudio()
+  const c = { ...(await currentConfig()), ...opts }
+  if (seq !== speakSeq) return
   if (c.provider === 'grok') {
     try {
-      const blob = await api.tts(text, { voice_id: c.voice_id, speed: c.speed })
+      const blob = await grokAudio(text, c.voice_id, c.speed)
       if (seq !== speakSeq) return // stopped or replaced while Grok was generating
       await playBlob(blob)
       return
