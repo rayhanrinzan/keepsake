@@ -54,6 +54,7 @@ export function focusPosition(bbox: [number, number, number, number] | undefined
 
 export const EVENT_LABEL: Record<string, string> = {
   first_seen: 'First noticed',
+  seen: 'Seen',
   object_observed: 'Seen',
   interaction_candidate: 'Hand near it',
   possible_pickup: 'Possibly picked up',

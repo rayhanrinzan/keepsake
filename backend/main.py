@@ -98,6 +98,10 @@ def snapshot_view(s: dict | None) -> dict | None:
             "confidence": s["confidence"], "image_url": f"/api/snapshots/{s['id']}/image"}
 
 
+def _when(row: dict) -> float:
+    return datetime.fromisoformat(row["timestamp"]).timestamp()
+
+
 def object_view(item: dict, rec: dict | None, snap: dict | None) -> dict:
     """The one canonical object shape used by List, detail, voice and Photon.
 
@@ -109,8 +113,9 @@ def object_view(item: dict, rec: dict | None, snap: dict | None) -> dict:
     observation = db.latest_sighting(item["object_id"])
     if observation and observation["snapshot_id"] is not None:
         photo = db.get_snapshot(observation["snapshot_id"])
-        if photo and photo["object_id"] == item["object_id"] and snapshots.path_for(photo["filename"]):
-            snap = photo
+        if (photo and photo["object_id"] == item["object_id"] and snapshots.path_for(photo["filename"])
+                and (snap is None or _when(photo) >= _when(snap))):
+            snap = photo  # the observation's own photo, unless a newer sighting photo exists
     last_seen, visible, confidence = None, False, None
     if rec is not None:
         last_seen, visible, confidence = rec["last_seen"], bool(rec["visible"]), rec["confidence"]
