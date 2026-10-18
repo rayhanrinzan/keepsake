@@ -146,8 +146,8 @@ def test_high_assistance_reminds_after_short_delay_out_of_view(w):
     w.run(2)
     assert w.state().state == PENDING_REMINDER and w.state().evidence == "object_observed"
     w.hide()
-    w.run(10)
-    assert w.alerts == []  # not yet: 15 s delay
+    w.run(2)
+    assert w.alerts == []  # not yet: 6 s delay
     w.run(10)
     assert len(w.alerts) == 1
     a = w.alerts[0]
@@ -346,7 +346,7 @@ def test_snapshot_id_of_another_object_is_not_accepted(w):
 
 
 def test_stale_photo_cancels(w):
-    w.engine.update_settings({"overrides": {"high_assistance": {"max_photo_age": 10}}})
+    w.engine.update_settings({"overrides": {"high_assistance": {"max_photo_age": 4}}})
     w.sight()
     w.run(1)
     w.hide()

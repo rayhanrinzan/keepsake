@@ -37,7 +37,7 @@ One policy engine with two presets. `off` is the default.
 |---|---|---|
 | For | People who choose frequent memory support | Fewer, higher-confidence reminders |
 | Triggers | Confirmed placement; hand-near-then-stable; or a stable photo-backed sighting (cautious wording) | Confirmed placement (confidence ≥ 0.6), or an explicit "heading out" check |
-| Delay | 15 s out of view | 150 s out of view |
+| Delay | 6 s after the last sighting (text arrives ~10 s after) | 150 s out of view |
 | Per-item cooldown | 5 min | 30 min |
 | Global cooldown | 60 s | 10 min |
 | Wording | "Keepsake reminder: … Check whether you have it." | "Heading out? … Check whether you have it." |

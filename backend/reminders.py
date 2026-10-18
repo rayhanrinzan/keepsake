@@ -48,7 +48,7 @@ SETTINGS_KEY = "reminder_settings"
 # Shared engine, two presets. Times in seconds.
 PRESETS: dict[str, dict] = {
     "high_assistance": {
-        "delay": 15,                    # out of view this long after the sighting/placement
+        "delay": 6,                     # since the last sighting; the text lands ~10 s after (poll + send)
         "triggers": ["placement_confirmed", "object_observed",
                      "interaction_then_stable"],
         "min_confidence": 0.45,
