@@ -114,6 +114,9 @@ class WearableObserver:
     * camera motion: frames with camera_motion above `max_camera_motion` neither add nor remove
       evidence (blurred pans cause false boxes);
     * duplicates: at most one event per item per `cooldown_seconds`, and repeated frames are ignored.
+
+    An item that stays in view is re-sighted every `cooldown_seconds` (same steadiness checks), so its
+    last photo keeps up with it instead of freezing at the moment it first appeared.
     """
 
     def __init__(self, camera_mode: str = "wearable", window: int = 5, min_hits: int = 3,
@@ -149,8 +152,8 @@ class WearableObserver:
             if not steady:
                 continue
             s.frames.append(_Hit(now, o.confidence, tuple(o.bbox), frame_id) if o else None)
-            if s.present:
-                continue
+            if s.present and (o is None or not s.last_emit or now - s.last_emit < self.cooldown):
+                continue  # already reported; refresh only once the cooldown has passed
             hits = [h for h in s.frames if h]
             if len(hits) < self.min_hits:
                 continue
