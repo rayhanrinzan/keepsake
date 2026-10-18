@@ -48,6 +48,18 @@ async function get<T>(path: string): Promise<T> {
 
 export const imageUrl = (path: string) => (path.startsWith('http') ? path : `${BASE}${path}`)
 
+/** The backend's camera status (subset of /api/health), for the setup camera view. */
+export interface Health {
+  camera: string // 'active', 'starting', 'disconnected', …
+  fps: number
+  warning: string | null
+  error: string | null
+}
+
+export async function getHealth(): Promise<Health> {
+  return get('/api/health')
+}
+
 export async function getObjects(): Promise<TrackedObject[]> {
   if (SAMPLE) return sample.objects
   return get('/api/objects')

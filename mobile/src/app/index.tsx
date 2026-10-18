@@ -5,6 +5,7 @@ import { Image, Linking, Pressable, ScrollView, StyleSheet, TextInput, useWindow
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg'
 import { CenterType } from '../components/CenterType'
+import { LiveCamera } from '../components/LiveCamera'
 import { SettingsSidebar } from '../components/SettingsSidebar'
 import { T } from '../components/ui'
 import { Unfold } from '../components/Unfold'
@@ -261,6 +262,7 @@ export default function Home() {
         </View>
 
         <View style={[s.panel, { paddingBottom: inset.bottom + 32 }]}>
+          {prefs.showCamera && <LiveCamera />}
           <T size={24} weight="medium" color={INK} style={{ marginBottom: 24 }}>My Items</T>
           {error && <T size={17} color={MUTED}>I can't reach your Keepsake right now. I'll keep trying.</T>}
           {items && items.length === 0 && <T size={17} color={MUTED}>Nothing is being tracked yet.</T>}

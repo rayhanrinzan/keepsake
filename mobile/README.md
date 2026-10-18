@@ -15,6 +15,10 @@ Press `w` for the browser, or scan the QR code with Expo Go on your phone (same 
 Screens live in `src/app/` (one file per screen). Live mode reads `/api/objects` and asks `/api/query`.
 Sample data (`src/lib/sample.ts`) is only used by `npm run sample`.
 
+**Setting up the camera:** tap the logo for Settings, then **Setup → Show camera feed**. The live view of the
+worn camera (and its status, e.g. black frames) appears above My Items. It's off by default and remembered
+on the device, so turn it off again before handing the phone to someone (or for judging).
+
 Not done yet:
 - Speech to text on phones needs a development build with `expo-speech-recognition`; in Expo Go you type instead. The browser version already listens.
 - The caretaker side (name, address, phone, reminders, support level) has no backend yet, so in live mode those screens say nothing has been set up.
