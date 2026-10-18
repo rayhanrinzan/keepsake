@@ -56,6 +56,20 @@ export function SettingsSidebar({ open, onClose }: { open: boolean; onClose: () 
             )
           })}
         </View>
+
+        {/* For whoever sets Keepsake up: turn the camera on to aim the mount, off before handing it over. */}
+        <T size={14} color={P.soft} style={{ marginTop: 32, marginBottom: 12 }}>Setup</T>
+        <Pressable onPress={() => set({ showCamera: !prefs.showCamera })} accessibilityRole="switch" accessibilityState={{ checked: prefs.showCamera }}
+          accessibilityLabel="Show camera feed on the home screen"
+          style={({ pressed }) => [s.option, s.row, prefs.showCamera && s.optionOn, pressed && s.pressed]}>
+          <View style={{ flex: 1, gap: 4 }}>
+            <T size={18} weight="medium" color={P.line}>Show camera feed</T>
+            <T size={14} color={P.soft}>What the worn camera sees, above My Items. For setting up; turn it off afterwards.</T>
+          </View>
+          <View style={[s.track, prefs.showCamera && s.trackOn]}>
+            <View style={[s.knob, prefs.showCamera && s.knobOn]} />
+          </View>
+        </Pressable>
       </Animated.View>
     </View>
   )
@@ -71,4 +85,9 @@ const s = StyleSheet.create({
   optionOn: { borderColor: '#ffb27a', backgroundColor: 'rgba(255,178,122,0.08)' },
   dot: { width: 18, height: 18, marginTop: 3, borderRadius: 9, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.5)' },
   dotOn: { borderColor: '#ffb27a', backgroundColor: '#ffb27a' },
+  row: { alignItems: 'center' },
+  track: { width: 46, height: 28, borderRadius: 14, padding: 3, backgroundColor: 'rgba(255,255,255,0.18)' },
+  trackOn: { backgroundColor: '#ffb27a' },
+  knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff' },
+  knobOn: { transform: [{ translateX: 18 }] },
 })
