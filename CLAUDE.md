@@ -94,9 +94,9 @@ cd lastseen-wearable && .venv/bin/python -m pytest   # Roman's app, its own venv
 - Never fabricate detections, photos or locations in live mode. Synthetic data belongs only in tests.
   Never turn a screen position into a room location; there are no room areas.
 - Never commit DBs, photos, frames, weights or secrets (`backend/data/`, `*.pt`, `*.task`, `.env`).
-  **Exceptions:** `backend/models/items.pt` (PR #10) and `backend/models/items_room.pt` (Amanda's
-  room-trained model, loaded alongside it) are committed so the team shares the trained models. Keep
-  them the only weights files in git.
+  **Exceptions:** `backend/models/items.pt` (agreed in PR #10) and `backend/models/items_room.pt`
+  (the same model fine-tuned on extra photos: carpet floor and other surfaces) are committed so the
+  team shares the trained models. Keep them the only weights files in git.
 - Seeing an item somewhere else on screen is never a movement event.
 - Reminders are off until an explicit opt-in; hand proximity is never contact; wording is "last seen".
 - Work happens on feature branches. Don't push to main or merge without approval. `integration/merge-all`
