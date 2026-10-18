@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Keepsake",
+    "slug": "keepsake",
+    "scheme": "keepsake",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/mark.png",
+    "userInterfaceStyle": "light",
+    "ios": { "supportsTablet": true },
+    "android": { "adaptiveIcon": { "foregroundImage": "./assets/mark.png", "backgroundColor": "#ffffff" } },
+    "web": { "bundler": "metro", "output": "single", "favicon": "./assets/mark.png" },
+    "plugins": ["expo-router", "expo-font"],
+    "experiments": { "typedRoutes": false }
+  }
+}
