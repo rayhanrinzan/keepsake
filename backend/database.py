@@ -205,16 +205,30 @@ class Database:
                                (snapshot_id, event_id))
             self._conn.commit()
 
+    def latest_sighting(self, object_id: str) -> dict | None:
+        """Latest actual visual evidence, excluding inferred pickup/hand proximity events."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM observations WHERE object_id = ? AND event_type IN "
+                "('object_observed', 'placement_confirmed') "
+                "ORDER BY julianday(timestamp) DESC, seq DESC LIMIT 1", (object_id,)).fetchone()
+        if row is None:
+            return None
+        event = json.loads(row["payload"])
+        event.update(seq=row["seq"], snapshot_id=row["snapshot_id"])
+        return event
+
     def get_observations(self, limit: int = 50, after_seq: int = 0, event_type: str | None = None,
-                         object_id: str | None = None) -> list[dict]:
-        """Newest first. `seq` is a cursor: pass the largest seq you have as after_seq to poll."""
+                         object_id: str | None = None, oldest_first: bool = False) -> list[dict]:
+        """Newest first by default; internal consumers can drain oldest-first without skipping a backlog."""
         sql, args = "SELECT * FROM observations WHERE seq > ?", [after_seq]
         if event_type:
             sql, args = sql + " AND event_type = ?", args + [event_type]
         if object_id:
             sql, args = sql + " AND object_id = ?", args + [object_id]
         with self._lock:
-            rows = self._conn.execute(sql + " ORDER BY seq DESC LIMIT ?", args + [limit]).fetchall()
+            order = "ASC" if oldest_first else "DESC"
+            rows = self._conn.execute(sql + f" ORDER BY seq {order} LIMIT ?", args + [limit]).fetchall()
         out = []
         for r in rows:
             ev = json.loads(r["payload"])

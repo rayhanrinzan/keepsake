@@ -71,6 +71,8 @@ export interface Health {
   proposal: ProposedArea[]
   view_id: string
   capture_enabled: boolean
+  /** wearable: chest-mounted phone (no room positions); fixed: camera on a stand. */
+  camera_mode?: 'wearable' | 'fixed'
   person_present?: boolean
   person_left_count?: number
   /** Only set by the design-only sample server (`npm run dev:sample`). */

@@ -567,7 +567,8 @@ def test_manual_check_uses_real_memory_and_is_labelled(w):
     assert r["queued"] and r["alert"]["trigger"] == "manual"
     item = r["alert"]["items"][0]
     assert item["object_id"] == "wallet_01" and item["evidence"] in ("object_observed", "stored_observation")
-    assert {s["object_id"]: s["reason"] for s in r["skipped"]} == {"car_key_01": "no_memory"}
+    assert {s["object_id"]: s["reason"] for s in r["skipped"]} == {
+        "car_key_01": "no_memory", "airpods_case_01": "no_memory", "glasses_01": "no_memory"}
     assert w.engine.check("manual")["skipped"][0]["reason"] in ("already_queued", "no_memory")
 
 
@@ -608,7 +609,7 @@ def test_reminder_api_opt_in_events_check_and_delivery(api):
                  json={"mode": "high_assistance", "enabled": True}).status_code == 409  # no opt-in
     s = c.put("/api/reminders/settings", headers=LOCAL,
               json={"mode": "high_assistance", "enabled": True, "opt_in": True}).json()
-    assert s["active"] and s["settings"]["important"] == ["keys", "wallet", "phone"]
+    assert s["active"] and s["settings"]["important"] == ["keys", "wallet", "airpods", "glasses"]
     assert c.post("/api/reminders/events", json={}).status_code == 403
     assert c.post("/api/reminders/events", headers=LOCAL, json={"event_type": "x"}).status_code == 422
     r = c.post("/api/reminders/events", headers=LOCAL, json={

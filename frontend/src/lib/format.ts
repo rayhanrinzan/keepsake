@@ -40,7 +40,8 @@ export const fullTime = (iso: string) =>
   })
 
 /** Display form of a location label from the backend ("Couch", "Near Couch", "Left side"). */
-export function placeName(label: string) {
+export function placeName(label: string | null | undefined) {
+  if (!label) return 'Last seen'
   if (label === 'Left side' || label === 'Right side') return `${label} of the room`
   if (label === 'Middle') return 'Middle of the room'
   if (label.startsWith('Near ')) return `Near the ${label.slice(5).toLowerCase()}`

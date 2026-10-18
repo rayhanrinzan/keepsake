@@ -84,3 +84,22 @@ def test_env_file_loader_never_overrides_real_env(tmp_path, monkeypatch):
     load_env_file(f)
     import os
     assert os.environ["XAI_API_KEY"] == "from-shell" and os.environ["OTHER_THING"] == "quoted"
+
+
+def test_env_file_loader_strips_inline_comments(tmp_path, monkeypatch):
+    """`.env.example` puts comments after values; copied as-is they must not end up in the value."""
+    f = tmp_path / ".env"
+    f.write_text("XAI_API_KEY=xai-abc123          # xai-… key from console.x.ai\n"
+                 "CTRLF_CONFIDENCE=0.4  # minimum YOLO confidence\n"
+                 "HASH_IN_QUOTES='a # b'\n"
+                 "export CTRLF_CAMERA_NAME=iPhone\n"
+                 "EMPTY=        # nothing set\n")
+    for k in ("XAI_API_KEY", "CTRLF_CONFIDENCE", "HASH_IN_QUOTES", "CTRLF_CAMERA_NAME", "EMPTY"):
+        monkeypatch.delenv(k, raising=False)
+    load_env_file(f)
+    import os
+    assert os.environ["XAI_API_KEY"] == "xai-abc123"
+    assert float(os.environ["CTRLF_CONFIDENCE"]) == 0.4
+    assert os.environ["HASH_IN_QUOTES"] == "a # b"
+    assert os.environ["CTRLF_CAMERA_NAME"] == "iPhone"
+    assert os.environ["EMPTY"] == ""

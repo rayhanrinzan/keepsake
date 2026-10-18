@@ -1,6 +1,6 @@
 import { Spectrum } from "spectrum-ts";
 import { imessage } from "@spectrum-ts/imessage";
-import { ConfigError, loadConfig } from "./config.ts";
+import { ConfigError, loadConfig, normalizePhone } from "./config.ts";
 import { replyTo, SeenMessages } from "./inbound.ts";
 import { KeepsakeClient } from "./keepsake.ts";
 import { SpectrumIMessageNotifier } from "./notifier.ts";
@@ -75,7 +75,7 @@ for await (const [space, message] of app.messages) {
       console.log(`[photon] ignored ${message.content.type} message from ${from}`);
       continue;
     }
-    if (!config.recipients.includes(message.sender?.id ?? "")) {
+    if (!message.sender?.id || !config.recipients.includes(normalizePhone(message.sender.id))) {
       console.log(`[photon] ignored message from unauthorized sender ${from}`);
       continue;
     }

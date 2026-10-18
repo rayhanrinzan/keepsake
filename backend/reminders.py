@@ -83,7 +83,7 @@ DEFAULT_SETTINGS = {
     "enabled": False,        # nothing is queued until someone explicitly opts in
     "mode": "off",
     "opted_in_at": None,
-    "important": ["keys", "wallet", "phone"],  # names/aliases; resolved against the catalog
+    "important": ["keys", "wallet", "airpods", "glasses"],  # names/aliases, resolved via the catalog
     "overrides": {"high_assistance": {}, "everyday": {}},
     "paused_until": None,    # epoch seconds; float("inf") is stored as -1 (paused until resumed)
 }
@@ -98,7 +98,7 @@ OVERRIDABLE = {"delay", "min_confidence", "per_item_cooldown", "global_cooldown"
 
 
 def _ts(iso: str | None) -> float | None:
-    if not iso:
+    if not isinstance(iso, str) or not iso:
         return None
     try:
         dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
@@ -139,8 +139,9 @@ class _Obj:
 
 class ReminderEngine:
     def __init__(self, db, memory=None, modes=None, regions=None, departures=None,
-                 status_fn=None, clock=time.time, camera_mode: str = "wearable"):
+                 status_fn=None, clock=time.time, camera_mode: str = "wearable", photo_available=None):
         self.db = db
+        self.photo_available = photo_available or (lambda photo: True)
         self.camera_mode = "fixed" if camera_mode in ("fixed", "stationary") else "wearable"  # CTRLF_CAMERA_MODE
         self.memory = memory
         self.modes = modes
@@ -163,6 +164,7 @@ class ReminderEngine:
         self._observation_cursor = self._max_observation_seq()
         self._departure_cursor = departures.latest_id() if departures else 0
         self._departure_at = float("-inf")
+        self._last_event_time: dict[str, float] = {}
         self._last_obs: dict[str, float] = {}       # newest vision sighting per item (wearable)
         self._last_detected: dict[str, float] = {}  # last tick the item was in the live detections
         self.log: deque[dict] = deque(maxlen=200)         # diagnostics, no message text
@@ -324,6 +326,9 @@ class ReminderEngine:
         if self._duplicate(ev["event_id"]):
             return {"result": "duplicate"}
         o = self._objs[ev["object_id"]]
+        if ev["t"] < self._last_event_time.get(o.object_id, float("-inf")):
+            return {"result": "ignored", "why": "out_of_order"}
+        self._last_event_time[o.object_id] = ev["t"]
         etype, policy = ev["event_type"], self.policy()
         watched = self.active() and ev["object_id"] in self.important() and not self.paused(now)
 
@@ -384,6 +389,11 @@ class ReminderEngine:
         return {"result": "scheduled" if o.state == PENDING_REMINDER else "candidate", "state": o.state}
 
     def _cancel(self, o: _Obj, reason: str) -> None:
+        alert = self._alerts.get(o.alert_id)
+        if alert and alert["status"] == "queued":
+            alert["items"] = [i for i in alert["items"] if i["object_id"] != o.object_id]
+            if not alert["items"]:
+                alert["status"], alert["reason"] = "cancelled", reason
         o.state, o.reason, o.alert_id = CANCELLED, reason, None
         self._note("cancelled", object_id=o.object_id, reason=reason, episode=o.episode)
 
@@ -434,7 +444,7 @@ class ReminderEngine:
         """Vision pipeline events (backend/events.py contract), oldest first."""
         if not hasattr(self.db, "get_observations"):
             return []
-        rows = list(reversed(self.db.get_observations(limit=200, after_seq=self._observation_cursor)))
+        rows = self.db.get_observations(limit=200, after_seq=self._observation_cursor, oldest_first=True)
         if rows:
             self._observation_cursor = rows[-1]["seq"]
         return [{**r, "source": "observations"} for r in rows]
@@ -501,7 +511,7 @@ class ReminderEngine:
     def _photo(self, o: _Obj, rec: dict | None = None) -> dict | None:
         """The newest real photo of the item (the reminder's grounding)."""
         snaps = self.db.get_snapshots(o.object_id, limit=1)
-        return snaps[0] if snaps else None
+        return snaps[0] if snaps and self.photo_available(snaps[0]) else None
 
     def _view_ok(self, rec: dict) -> bool:
         return self.memory is None or rec.get("view_id") in (None, getattr(self.memory, "view_id", None))
@@ -665,6 +675,7 @@ class ReminderEngine:
     def claim(self, alert_id: int) -> dict:
         """The agent takes an alert before sending, so it can never be sent twice."""
         with self._lock:
+            self.tick()  # consume new pickup/placement evidence before reserving a send
             a = self._alerts.get(alert_id)
             if a is None:
                 raise KeyError(alert_id)
@@ -674,7 +685,23 @@ class ReminderEngine:
             if not self.active() or self.paused(self.clock()):
                 a["status"], a["reason"] = "cancelled", "reminders_off"
                 raise PermissionError(f"alert {alert_id} cancelled")
-            a["status"], a["claimed_at"] = "sending", self.clock()
+            now = self.clock()
+            status = self.status_fn() or {}
+            hold = hold_reason(self.modes, self.memory, status, now=now) if self.modes else None
+            for item in list(a["items"]):
+                o = self._objs[item["object_id"]]
+                rec = self._object(o.object_id)
+                photo = self.db.get_snapshot(item["snapshot_id"]) if item["snapshot_id"] else None
+                if photo and not self.photo_available(photo):
+                    photo = None
+                why = self._blocked(o, rec, photo, self.policy(), now, hold)
+                if why is None and a["trigger"] == "automatic" and not self._due(o, rec, self.policy(), now):
+                    why = "no_longer_due"
+                if why:
+                    self._cancel(o, why)
+            if not a["items"]:
+                raise PermissionError(f"alert {alert_id} cancelled")
+            a["status"], a["claimed_at"] = "sending", now
             a["attempts"] += 1
             return self._public(a)
 
