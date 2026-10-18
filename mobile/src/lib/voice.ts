@@ -6,6 +6,10 @@ import type { Settings } from './settings'
 
 const web = Platform.OS === 'web' && typeof window !== 'undefined'
 
+/** iPhone and iPad browsers (all WebKit) only start the microphone straight from a tap: no listening
+ *  after Keepsake finishes speaking, and no background (hands-free) listening. */
+export const tapToListen = web && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
+
 // ---- speaking: the Grok voice (through the backend, so the key stays there) or the device's own ----
 // Same behaviour as the web app: the voice settings live in the backend, a Grok failure falls back
 // to the device voice so a conversation never goes silent, and repeated lines are cached. On a phone
@@ -175,20 +179,39 @@ export function canListen() {
   return Boolean(Recognition)
 }
 
-export function listen(onText: (text: string, final: boolean) => void, onEnd: () => void) {
+/** Listen for one utterance. `onEnd` gets the browser's error code if it stopped because of one
+ *  ('not-allowed', 'service-not-allowed', 'no-speech', …, or 'start-failed'). */
+export function listen(onText: (text: string, final: boolean) => void, onEnd: (error?: string) => void) {
   pauseWake() // only one recognizer can hold the mic
   const rec: Rec = new Recognition()
   active = rec
   rec.lang = 'en-US'
   rec.interimResults = true
+  let error: string | undefined
   rec.onresult = e => {
     const r = e.results[e.results.length - 1]
     onText(r[0].transcript, r.isFinal)
   }
-  rec.onend = () => { if (active === rec) active = null; onEnd() }
-  rec.onerror = () => {}
-  rec.start()
-  return () => rec.stop()
+  rec.onerror = e => { error = e?.error ?? 'other' }
+  rec.onend = () => { if (active === rec) active = null; onEnd(error) }
+  try {
+    rec.start()
+  } catch {
+    active = null
+    setTimeout(() => onEnd('start-failed'), 0)
+  }
+  return () => { try { rec.stop() } catch { /* already stopped */ } }
+}
+
+/** What to tell them when the browser won't listen. */
+export function micProblem(error: string | undefined): string | null {
+  if (error === 'not-allowed' || error === 'service-not-allowed' || error === 'start-failed') {
+    return tapToListen
+      ? "I can't use the microphone. Allow it for this site, and turn on Siri & Dictation in Settings. Or tap the keyboard to type."
+      : "I can't use the microphone. Allow it in the browser, or tap the keyboard to type."
+  }
+  if (error === 'no-speech') return "I didn't hear anything. Tap the microphone and try again."
+  return null
 }
 
 // ---- hands-free: listen in the background for "where is my …" and start a lookup (web app parity) ----
@@ -258,7 +281,7 @@ function openWake() {
 
 export function startWakeListener(onWake: (said: string) => void, onState?: (s: WakeState) => void) {
   wakeStateCb = onState ?? null
-  if (!Recognition) return setWakeState('unsupported')
+  if (!Recognition || tapToListen) return setWakeState('unsupported')
   wakeHandler = onWake
   wakePaused = false
   scheduleWake(0)

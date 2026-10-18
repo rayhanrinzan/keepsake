@@ -89,6 +89,9 @@ export interface Health {
   detections: { category: string; name: string; confidence: number }[]
   capture_enabled: boolean
   person_present?: boolean
+  /** The hosted recorded demo (demo_site/): real photos from one session, no live camera. */
+  demo?: boolean
+  recorded?: string
 }
 
 export async function getHealth(): Promise<Health> {

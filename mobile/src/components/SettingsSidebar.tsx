@@ -8,7 +8,7 @@ import type { Assist } from '../lib/settings'
 import { useSettings } from '../lib/settings'
 import { cameraStatus } from '../lib/status'
 import { P } from '../lib/theme'
-import { canListen, say, setVoiceConfig, stopSpeaking } from '../lib/voice'
+import { canListen, say, setVoiceConfig, stopSpeaking, tapToListen } from '../lib/voice'
 import type { WakeState } from '../lib/voice'
 import { T } from './ui'
 
@@ -210,7 +210,8 @@ export function SettingsSidebar({ open, onClose, wakeState = 'off' }: { open: bo
 
           <Heading>Hands-free</Heading>
           <Toggle on={prefs.handsFree} onPress={() => set({ handsFree: !prefs.handsFree })} label="Hands-free listening"
-            title="Listen for questions" detail={canListen() ? (prefs.handsFree ? WAKE_TEXT[wakeState] : WAKE_TEXT.off) : WAKE_TEXT.unsupported} />
+            title="Listen for questions" detail={tapToListen ? 'iPhone browsers only listen right after a tap, so use the microphone button. Hands-free works in Chrome on a computer or an Android phone.'
+              : canListen() ? (prefs.handsFree ? WAKE_TEXT[wakeState] : WAKE_TEXT.off) : WAKE_TEXT.unsupported} />
 
           <Heading>Privacy</Heading>
           <T size={14} color={P.soft} style={{ marginBottom: 12 }}>

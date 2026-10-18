@@ -26,6 +26,15 @@ iPhone (Continuity Camera) ─► OpenCV ─► YOLO-World + items.pt (trained) 
 - **When a photo is taken:** with each `object_observed` (an item seen steadily, at most once per item every 30 s) and each `placement_confirmed`. A single-frame false hit never counts: memory needs `CTRLF_STABILITY_FRAMES` detections within `CTRLF_SETTLE_SECONDS`.
 - **Photos:** full camera frames, with the item's box highlighted in the app. Each item keeps its 20 most recent (`CTRLF_SNAPSHOT_RETENTION`). A background thread writes them, so detection never waits on the disk.
 
+## Try it without the hardware
+
+**https://keepsake-demo.vercel.app**: the mobile app running on a recording of one real session. The
+photos, times and Amanda's descriptions are real, and each photo was checked by us. Ask "Where are my
+keys?" by voice (Chrome) or by typing. The live camera, detection and reminders need the chest-worn
+iPhone and the laptop, so they're in the demo video. Rebuild with
+`scripts/export_demo.py backend/data/demo-recording backend/data/demo-site`, then `vercel deploy --prod`
+from that folder. The photos stay out of git.
+
 ## Install
 
 ```bash

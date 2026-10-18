@@ -19,7 +19,7 @@ import { canMeasure, measure } from '../lib/level'
 import { CHECK_IN, useSettings } from '../lib/settings'
 import { F, P } from '../lib/theme'
 import { cameraStatus } from '../lib/status'
-import { canListen, listen, pauseWake, resumeWake, speak, startWakeListener, stillSpeaking, stopSpeaking, stopWakeListener } from '../lib/voice'
+import { canListen, listen, micProblem, pauseWake, resumeWake, speak, startWakeListener, stillSpeaking, stopSpeaking, stopWakeListener, tapToListen } from '../lib/voice'
 import type { WakeState } from '../lib/voice'
 
 type Mode = 'idle' | 'listening' | 'thinking' | 'speaking' | 'answered'
@@ -199,7 +199,7 @@ export default function Home() {
     if (mine !== turn.current) return
     setFound(a.object ?? null)
     // With the microphone on, it goes straight back to listening after answering.
-    say(a.text, () => (on.current ? hear() : setMode('answered')))
+    say(a.text, () => (on.current && !tapToListen ? hear() : (mic(false), setMode('answered'))))
   }
 
   /** Say something and wait until it's finished. */
@@ -208,7 +208,8 @@ export default function Home() {
   /** Listen for one reply (null if nothing was heard). */
   function hearOnce(): Promise<string | null> {
     return new Promise(done => {
-      if (!voice) return done(null)
+      // On an iPhone the mic only opens from a tap: they tap the microphone to answer.
+      if (!voice || tapToListen) { setMode('idle'); return done(null) }
       setHeard('')
       setMode('listening')
       let got: string | null = null
@@ -283,10 +284,18 @@ export default function Home() {
         setHeard(text)
         if (final && !got) { got = true; reply(text) }
       },
-      () => {
+      error => {
         if (got) return
-        if (on.current) setTimeout(() => on.current && hear(), 300)
-        else setMode(m => (m === 'listening' ? 'idle' : m))
+        const problem = micProblem(error)
+        // A blocked mic, or an iPhone (it can't reopen the mic without a tap): stop and say why.
+        if (problem && (tapToListen || error !== 'no-speech')) {
+          mic(false)
+          setHeard('')
+          setSaid(problem)
+          return setMode('answered')
+        }
+        if (on.current && !tapToListen) setTimeout(() => on.current && hear(), 300)
+        else { mic(false); setMode(m => (m === 'listening' ? 'idle' : m)) }
       },
     )
   }
@@ -314,6 +323,8 @@ export default function Home() {
       return say(PROMPT, () => setMode('idle'))
     }
     mic(true)
+    // On an iPhone the mic has to open right now, inside the tap; the question just shows on screen.
+    if (tapToListen) { setSaid(PROMPT); return hear() }
     // With less help it just listens; otherwise Keepsake asks first.
     if (prefs.assist === 'less') hear()
     else say(PROMPT, hear)
@@ -356,7 +367,8 @@ export default function Home() {
           <View style={s.said}>
             {mode === 'idle'
               ? <T size={14} weight="light" color={P.soft} style={{ textAlign: 'center' }}>
-                  {prefs.handsFree && voice && !gestured ? 'Tap anywhere to turn on voice. Then just say "Where are my keys?"'
+                  {tapToListen ? 'Tap the microphone and ask, like "Where are my keys?"'
+                    : prefs.handsFree && voice && !gestured ? 'Tap anywhere to turn on voice. Then just say "Where are my keys?"'
                     : prefs.handsFree && wakeState === 'listening' ? 'Just say "Where are my keys?"' : INVITE}
                 </T>
               : asking
@@ -427,6 +439,12 @@ export default function Home() {
 
         <View style={[s.panel, { paddingBottom: inset.bottom + 32 }]}>
           {prefs.showCamera && <LiveCamera />}
+          {health?.demo && (
+            <View style={s.demo}>
+              <T size={14} weight="medium" color={INK}>Recorded demo{health.recorded ? `, ${new Date(health.recorded + 'T12:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}` : ''}</T>
+              <T size={13} color={MUTED}>Real photos and answers from one session with the chest camera, each photo checked by us. The live version runs on the wearer's laptop. Ask "Where are my keys?" by voice or by typing.</T>
+            </View>
+          )}
           <View style={{ marginBottom: 24, gap: 4 }}>
             {items && items.length > 0 && <T size={13} weight="round" color={MUTED}>{items.filter(o => o.seen).length} of {items.length} remembered</T>}
             <T size={24} weight="medium" color={INK}>My Items</T>
@@ -439,7 +457,7 @@ export default function Home() {
                 style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [s.item, !o.seen && { opacity: 0.6 }, (pressed || hovered) && s.itemOn]}>
                 <Image source={itemPhoto(o.icon)} style={s.photo} resizeMode="contain" />
                 <View style={{ flex: 1 }}>
-                  <T size={20} color={INK} numberOfLines={1}>{o.name}</T>
+                  <T size={20} color={INK} numberOfLines={2}>{o.name}</T>
                   <T size={14} weight="round" color={MUTED} numberOfLines={2}>{where(o)}</T>
                 </View>
                 {o.snapshot && <Thumb snapshot={o.snapshot} width={60} height={45} alt={`Last photo of your ${o.name.toLowerCase()}`} />}
@@ -495,5 +513,6 @@ const s = StyleSheet.create({
   statusDot: { width: 7, height: 7, borderRadius: 4 },
   found: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 6, paddingRight: 14, borderWidth: 1, borderColor: P.faint, borderRadius: P.radius },
   live: { position: 'absolute', top: 10, right: 10, width: 8, height: 8, borderRadius: 4, backgroundColor: '#3ddc97' },
+  demo: { gap: 4, padding: 14, marginBottom: 24, borderRadius: P.radius, backgroundColor: '#fff4ea', borderWidth: 1, borderColor: '#ffd9b8' },
   event: { flexDirection: 'row', alignItems: 'baseline', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#eeeeee' },
 })

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "cleanUrls": false,
+  "rewrites": [
+    { "source": "/api/snapshots/:id/image", "destination": "/photos/:id.jpg" },
+    { "source": "/assets/node_modules/:path*", "destination": "/assets/nm/:path*" },
+    { "source": "/api/:path*", "destination": "/api/index" },
+    { "source": "/((?!_expo/|assets/|photos/|favicon).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    { "source": "/photos/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }] }
+  ]
+}
