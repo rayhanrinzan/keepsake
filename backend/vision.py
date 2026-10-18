@@ -161,6 +161,10 @@ class VisionWorker(threading.Thread):
         with self._jpeg_lock:
             return self._jpeg_id, self._jpeg
 
+    def latest_raw(self) -> np.ndarray | None:
+        """Newest camera frame without boxes drawn (snapshot size), e.g. for collecting training photos."""
+        return self._ring[-1][1] if self._ring else None
+
     def stop(self) -> None:
         self._halt.set()
 
@@ -170,14 +174,19 @@ class VisionWorker(threading.Thread):
             from ultralytics import YOLO, settings
             settings.update({"sync": False})  # no Ultralytics telemetry
             model = YOLO(self.model_path)
-            # Optional model trained on our own items (last-seen/train.py -> models/items.pt).
-            # It handles the items it knows; YOLO-World keeps looking for everything else.
-            self._items_model = None
-            items_path = Path(os.getenv("CTRLF_ITEMS_MODEL", str(Path(__file__).parent / "models" / "items.pt")))
-            if items_path.exists():
-                self._items_model = YOLO(str(items_path))
-                log.info("custom items model %s: %s", items_path.name, list(self._items_model.names.values()))
-            custom = (set(self._items_model.names.values()) - NOT_TRAINED) if self._items_model else set()
+            # Optional models trained on our own items (last-seen/train.py -> models/items.pt, and
+            # last-seen/train_room.py -> models/items_room.pt). They handle the items they know, each
+            # item keeping its strongest box across them; YOLO-World keeps looking for everything else.
+            # CTRLF_ITEMS_MODEL: comma-separated paths instead.
+            here = Path(__file__).parent / "models"
+            paths = os.getenv("CTRLF_ITEMS_MODEL", f"{here / 'items.pt'},{here / 'items_room.pt'}")
+            self._items_models = []
+            for items_path in (Path(p.strip()) for p in paths.split(",") if p.strip()):
+                if items_path.exists():
+                    m = YOLO(str(items_path))
+                    self._items_models.append(m)
+                    log.info("custom items model %s: %s", items_path.name, list(m.names.values()))
+            custom = {n for m in self._items_models for n in m.names.values()} - NOT_TRAINED
             if self.verify_enabled:
                 from verify import ClipVerifier
                 self.verifier = ClipVerifier(self.device)
@@ -404,21 +413,20 @@ class VisionWorker(threading.Thread):
         return obs
 
     def _detect_items(self, frame: np.ndarray) -> list[Observation]:
-        """Detections from our own trained model (keys, wallet, AirPods, glasses)."""
-        m = getattr(self, "_items_model", None)
-        if m is None:
-            return []
-        res = m.predict(frame, conf=0.25, imgsz=640, device=self.device, verbose=False,
-                        agnostic_nms=True)[0]  # one label per physical box
+        """Detections from our own trained models (keys, wallet, AirPods, glasses)."""
         h, w = frame.shape[:2]
         best: dict[str, Observation] = {}  # one physical object per item: keep the strongest box
-        for xyxy, cls, cf in zip(res.boxes.xyxy.tolist(), res.boxes.cls.int().tolist(), res.boxes.conf.tolist()):
-            name = m.names[cls]
-            if name not in ALIASES or name in NOT_TRAINED or (name in best and best[name].confidence >= cf):
-                continue
-            x0, y0, x1, y1 = xyxy[0] / w, xyxy[1] / h, xyxy[2] / w, xyxy[3] / h
-            best[name] = Observation(category=name, confidence=float(cf), x=(x0 + x1) / 2,
-                                     y=(y0 + y1) / 2, track_id=None, bbox=(x0, y0, x1, y1))
+        for m in getattr(self, "_items_models", []):
+            res = m.predict(frame, conf=0.25, imgsz=640, device=self.device, verbose=False,
+                            agnostic_nms=True)[0]  # one label per physical box
+            for xyxy, cls, cf in zip(res.boxes.xyxy.tolist(), res.boxes.cls.int().tolist(),
+                                     res.boxes.conf.tolist()):
+                name = m.names[cls]
+                if name not in ALIASES or name in NOT_TRAINED or (name in best and best[name].confidence >= cf):
+                    continue
+                x0, y0, x1, y1 = xyxy[0] / w, xyxy[1] / h, xyxy[2] / w, xyxy[3] / h
+                best[name] = Observation(category=name, confidence=float(cf), x=(x0 + x1) / 2,
+                                         y=(y0 + y1) / 2, track_id=None, bbox=(x0, y0, x1, y1))
         return list(best.values())
 
     def _publish(self, frame: np.ndarray, obs: list[Observation],

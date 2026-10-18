@@ -8,6 +8,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import cv2
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -345,6 +346,18 @@ def camera_frame():
         raise HTTPException(503, "No frame yet")
     return Response(jpg, media_type="image/jpeg",
                     headers={"Cache-Control": "no-store", "X-Frame-Id": str(frame_id)})
+
+
+@app.get("/api/camera/raw")
+def camera_raw():
+    """Newest frame without boxes, as JPEG (kept in memory only). For collecting training photos."""
+    frame = worker.latest_raw() if worker else None
+    if frame is None:
+        raise HTTPException(503, "No frame yet")
+    ok, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    if not ok:
+        raise HTTPException(500, "Could not encode frame")
+    return Response(jpg.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/camera")

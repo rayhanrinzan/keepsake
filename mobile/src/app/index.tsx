@@ -218,6 +218,7 @@ export default function Home() {
 
   /** A short conversation Keepsake starts itself ("Are you looking for something?"), like the web app. */
   async function converse(question: string) {
+    if (question === LOOKING && prefs.assist === 'less') return // less help never checks in (Amanda)
     const mine = ++turn.current
     setFound(null)
     await sayAndWait(question)
