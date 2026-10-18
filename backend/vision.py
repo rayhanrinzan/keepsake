@@ -17,7 +17,7 @@ import numpy as np
 
 from cameras import find_camera, list_cameras
 from catalog import MIN_CONF, SUPPORTED
-from memory import ALIASES, ItemMemory, Observation, display_name
+from memory import ALIASES, ItemMemory, Observation, display_name, now_iso, object_id_for
 from presence import PresenceTracker
 from snapshots import SnapshotStore
 from wearable import Hand, InteractionDetector, WearableObserver
@@ -35,6 +35,7 @@ PERSON = "person"  # detected to judge occlusion and whether someone is in the r
 # where MediaPipe (which needs most of a hand) rarely fires. Both sources are merged.
 HAND = "hand"
 HAND_CONF = float(os.getenv("CTRLF_HAND_CONF", "0.2"))
+PHOTO_REFRESH = float(os.getenv("CTRLF_PHOTO_REFRESH", "8"))  # seconds between thumbnails per item
 
 
 def pick_device() -> str:
@@ -134,6 +135,7 @@ class VisionWorker(threading.Thread):
         self.verifier = None  # verify.ClipVerifier: second opinion on every item box
         self._ring: deque[tuple[int, np.ndarray]] = deque(maxlen=12)  # (frame_id, snapshot-size frame)
         self._frame_id = 0
+        self._photo_at: dict[str, float] = {}  # category -> monotonic time of its last thumbnail
         self._still_frames = 0  # consecutive frames with exactly zero change: a frozen feed
         self._frozen_frames = max(1, int(frozen_seconds * fps))
         self._halt = threading.Event()
@@ -279,7 +281,8 @@ class VisionWorker(threading.Thread):
                 log.info("person left the view")
             self.status.update(self.presence.status())
             for ev in self.memory.observe(obs, frame_id=self._frame_id):
-                log.info("%s %s", ev["event_type"], ev["name"])  # photos come from observation events
+                log.info("%s %s", ev["event_type"], ev["name"])
+            self._refresh_photos(full)
             mp_hands = self.hands.detect(frame) if self.hands else []
             hands = merge_hands(mp_hands, [Hand(o.bbox, o.confidence) for o in obs
                                            if o.category == HAND and o.confidence >= HAND_CONF])
@@ -296,6 +299,20 @@ class VisionWorker(threading.Thread):
         shown = [o for o in obs if o.category in MIN_CONF and o.confidence >= MIN_CONF[o.category]]
         people = [o for o in obs if o.category == PERSON and o.confidence >= self.presence.min_conf]
         self._publish(self._resize(frame, self.preview_width), shown, people, hands)  # only what's counted
+
+    def _refresh_photos(self, full: np.ndarray) -> None:
+        """Keep each item's thumbnail as fresh as its "last seen" time: whenever memory records a
+        sighting, save a photo of it, at most every PHOTO_REFRESH seconds per item. (The observer's
+        events need a nearly still camera, which a worn one rarely is, so photos lagged behind.)"""
+        now = time.monotonic()
+        for category, o in self.memory.sightings.items():
+            if now - self._photo_at.get(category, float("-inf")) < PHOTO_REFRESH:
+                continue
+            self._photo_at[category] = now
+            self.snapshots.submit({"object_id": object_id_for(category), "event_type": "seen",
+                                   "timestamp": now_iso(), "bbox": o.bbox, "region": None,
+                                   "confidence": round(o.confidence, 3), "view_id": self.memory.view_id},
+                                  full)
 
     def _observe_wearable(self, obs: list[Observation], hands) -> None:
         """Issue #4/#5 events: filtered sightings plus hand-object evidence, stored for Photon/voice."""

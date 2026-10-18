@@ -295,3 +295,12 @@ def test_camera_motion_ignores_the_moving_hand():
     m.update(b)
     assert m.background([]) > 0.05
     assert m.background([(0.35, 0.3, 0.65, 0.7)]) == 0.0
+
+
+def test_item_staying_in_view_is_resighted_after_the_cooldown():
+    """Seen live: a bottle that never left view kept a photo from hours earlier."""
+    f = Feed(WearableObserver(cooldown_seconds=30))
+    f.run(5 * 70, obs(KEYS, SPOT))  # 70 s continuously in view, camera steady
+    assert f.types() == [E.OBJECT_OBSERVED] * 3  # at 0 s, ~30 s, ~60 s
+    times = [e["timestamp"] for e in f.events]
+    assert times == sorted(times) and len(set(times)) == 3

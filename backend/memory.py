@@ -63,6 +63,7 @@ class ItemMemory:
         self.window = timedelta(seconds=settle_seconds)
         self._tracks: dict[str, _Track] = {}
         self._lock = threading.Lock()
+        self.sightings: dict[str, Observation] = {}  # items whose last-seen time this frame updated
         # One camera "view" for the life of the database: kept because the observation event
         # contract (events.py) carries a view_id.
         self.view_id = db.get_setting("view_id") or new_view_id()
@@ -79,6 +80,7 @@ class ItemMemory:
                     if o.category not in best or o.confidence > best[o.category].confidence:
                         best[o.category] = o
             events = []
+            self.sightings = {}
             for category, o in best.items():
                 ev = self._update(category, o, now, frame_id)
                 if ev:
@@ -100,6 +102,7 @@ class ItemMemory:
                    confidence=round(o.confidence, 3), track_id=o.track_id, view_id=self.view_id,
                    lost_while_moving=False)
         self.db.upsert_object(rec)
+        self.sightings[category] = o
         if not first:
             return None
         return {"object_id": rec["object_id"], "name": rec["name"], "category": category,

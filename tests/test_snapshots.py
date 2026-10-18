@@ -76,3 +76,28 @@ def test_clear_deletes_photos_and_rejects_bad_paths(mem, store, db, frame):
     assert db.get_snapshots("bottle_01") == [] and list(store.dir.glob("*.jpg")) == []
     assert (store.dir / "notes.txt").exists()
     assert store.path_for("../t.db") is None and store.path_for("notes.txt") is None
+
+
+def test_thumbnail_keeps_up_with_last_seen_on_a_moving_camera(mem, store, db, monkeypatch):
+    """Seen live: "last seen 5 seconds ago" with a photo from hours earlier, because the observer
+    needs a still camera. Every memory sighting now refreshes the photo (at most every 8 s)."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    import vision
+    from conftest import Clock
+    clock = [1000.0]
+    monkeypatch.setattr(vision.time, "monotonic", lambda: clock[0])
+    worker = SimpleNamespace(memory=mem, snapshots=store, _photo_at={})
+    c = Clock(mem)
+    image = np.full((360, 640, 3), 90, np.uint8)
+    taken = []
+    for step in range(60):  # 12 s at 5 fps, the item jumping around the frame (camera moving)
+        pos = (0.2 + 0.6 * (step % 3) / 2, 0.5)
+        c.frames(1, obs("wallet", pos=pos))
+        vision.VisionWorker._refresh_photos(worker, image)
+        clock[0] += 0.2
+    store.flush()
+    taken = db.get_snapshots("wallet_01")
+    assert len(taken) == 2 and {s["event_type"] for s in taken} == {"seen"}  # at ~0.4 s and ~8.4 s

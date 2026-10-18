@@ -7,7 +7,7 @@ export type ObservationType = 'object_observed' | 'interaction_candidate' | 'pos
 export interface Snapshot {
   id: number
   object_id: string
-  event_type: ObservationType | 'first_seen'
+  event_type: ObservationType | 'first_seen' | 'seen'
   timestamp: string
   bbox: [number, number, number, number]
   confidence: number
