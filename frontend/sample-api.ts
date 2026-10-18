@@ -6,42 +6,31 @@ import type { Plugin } from 'vite'
  * and the app shows a "Sample data" banner while it's on.
  */
 
-const regions = [
-  { name: 'Bed', kind: 'bed', x0: 0.05, y0: 0.15, x1: 0.42, y1: 0.6 },
-  { name: 'Couch', kind: 'couch', x0: 0.55, y0: 0.08, x1: 0.95, y1: 0.3 },
-  { name: 'Table', kind: 'dining table', x0: 0.55, y0: 0.55, x1: 0.8, y1: 0.85 },
-  { name: 'Chair', kind: 'chair', x0: 0.83, y0: 0.6, x1: 0.95, y1: 0.78 },
-]
-
 function objects() {
   const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
-  const item = (id: string, name: string, icon: string, at: [number, number, string, number] | null, visible = false, extra = {}) => ({
-    object_id: id, category: id, name, icon,
-    seen: at != null, status: at == null ? 'never' : visible ? 'visible' : 'last_seen',
-    region: at?.[2] ?? null, x: at?.[0] ?? null, y: at?.[1] ?? null, last_seen: at ? ago(at[3]) : null,
-    visible, confidence: at ? 0.9 : null, moving: false, awaiting_reconfirmation: false, lost_while_moving: false,
-    snapshot: at ? {
-      id: id.length, object_id: id, event_type: 'moved', timestamp: ago(at[3]), region: at[2],
-      bbox: [at[0] - 0.06, at[1] - 0.06, at[0] + 0.06, at[1] + 0.06], confidence: 0.9, view_id: 'sample',
-      image_url: `/api/sample-photo/${encodeURIComponent(name)}`,
+  // Minutes since last seen, or null if never seen. Photos have a time, never a room location.
+  const item = (id: string, name: string, icon: string, minutes: number | null, visible = false) => ({
+    object_id: `${id.replace(/ /g, '_')}_01`, category: id, name, icon,
+    seen: minutes != null, status: minutes == null ? 'never' : visible ? 'visible' : 'last_seen',
+    last_seen: minutes != null ? ago(minutes) : null, visible, confidence: minutes != null ? 0.9 : null,
+    snapshot: minutes != null ? {
+      id: name.length, object_id: id, event_type: 'object_observed', timestamp: ago(minutes),
+      bbox: [0.4, 0.4, 0.6, 0.6], confidence: 0.9, image_url: `/api/sample-photo/${encodeURIComponent(name)}`,
     } : null,
-    ...extra,
   })
   return [
-    item('cell phone', 'Phone', 'phone', [0.2, 0.35, 'Bed', 0], true),
-    item('bottle', 'Water bottle', 'bottle', [0.65, 0.7, 'Table', 12]),
-    item('laptop', 'Laptop', 'laptop', [0.7, 0.2, 'Couch', 0], true),
-    item('cup', 'Mug', 'cup', [0.3, 0.85, 'Left side', 3], false, { moving: true }),
-    item('book', 'Book', 'book', [0.75, 0.65, 'Table', 40], true),
-    item('backpack', 'Backpack', 'backpack', [0.9, 0.7, 'Chair', 95]),
-    item('remote', 'TV remote', 'remote', null),
-    item('mouse', 'Mouse', 'mouse', null),
+    item('bottle', 'Water Bottle', 'bottle', 12),
+    item('car key', 'Keys', 'keys', 0, true),
+    item('wallet', 'Wallet', 'wallet', 3),
+    item('airpods case', 'AirPods', 'airpods', 40),
+    item('glasses', 'Glasses', 'glasses', null),
+    item('backpack', 'Backpack', 'backpack', 95),
   ]
 }
 
 const health = {
   status: 'ok', camera: 'disabled', error: null, warning: null, fps: 0, detections: [],
-  mode: 'MONITORING', reference_ready: false, proposal: [], view_id: 'sample', capture_enabled: true, sample: true,
+  camera_mode: 'wearable', capture_enabled: true, sample: true,
 }
 
 export function sampleApi(): Plugin {
@@ -58,7 +47,6 @@ export function sampleApi(): Plugin {
           return
         }
         const body = path.startsWith('/health') ? health
-          : path.startsWith('/regions') ? regions
             : path.startsWith('/objects') && !path.includes('/snapshots') ? objects()
               : path.startsWith('/query') ? { found: false, answer: 'Search needs the real backend.', object: null }
                 : []

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { api } from '../lib/api'
 import type { Snapshot, TrackedObject } from '../lib/api'
-import { EVENT_LABEL, fullTime, iconFor, placeName, timeAgo } from '../lib/format'
+import { EVENT_LABEL, fullTime, iconFor, timeAgo } from '../lib/format'
 import { SnapshotPhoto } from './SnapshotPhoto'
 import { Status } from './ObjectList'
 
@@ -24,7 +24,6 @@ export function ObjectDetail({ o, now, onClose }: { o: TrackedObject; now: numbe
 
   const shown = history.find((s) => s.id === pickedId) ?? o.snapshot
   const isLatest = !shown || shown.id === latestId
-  const where = isLatest ? o.region : shown?.region
   const when = isLatest ? o.last_seen : shown?.timestamp
 
   return (
@@ -71,12 +70,9 @@ export function ObjectDetail({ o, now, onClose }: { o: TrackedObject; now: numbe
               </div>
             )}
 
-            <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-1">
-              <dt className="text-[13px] text-muted">{isLatest ? 'Last seen' : 'In this photo'}</dt>
-              <dt className="text-[13px] text-muted">{isLatest ? 'When' : 'Photo taken'}</dt>
-              <dd className="text-lg font-semibold">{where && placeName(where)}</dd>
+            <dl className="mt-5">
+              <dt className="text-[13px] text-muted">{isLatest ? 'Last seen' : 'Photo taken'}</dt>
               <dd className="text-lg font-semibold tabular-nums">{when && fullTime(when)}</dd>
-              <dd />
               <dd className="text-[13px] text-muted">{when && timeAgo(when, now)}</dd>
             </dl>
 
@@ -94,11 +90,11 @@ export function ObjectDetail({ o, now, onClose }: { o: TrackedObject; now: numbe
                         className="press block w-full text-left"
                       >
                         <div className={`aspect-[4/3] overflow-hidden rounded-lg ${shown?.id === s.id ? 'outline-2 outline-offset-2 outline-ink' : ''}`}>
-                          <SnapshotPhoto snapshot={s} alt={`${o.name}, ${placeName(s.region)}`} />
+                          <SnapshotPhoto snapshot={s} alt={`${o.name}, ${fullTime(s.timestamp)}`} />
                         </div>
                         <div className="mt-1.5 text-[13px] leading-tight">
-                          <div className="truncate font-medium">{placeName(s.region)}</div>
-                          <div className="text-muted">{EVENT_LABEL[s.event_type]} · {timeAgo(s.timestamp, now)}</div>
+                          <div className="truncate font-medium">{EVENT_LABEL[s.event_type] ?? 'Seen'}</div>
+                          <div className="text-muted">{timeAgo(s.timestamp, now)}</div>
                         </div>
                       </button>
                     </li>
@@ -114,9 +110,6 @@ export function ObjectDetail({ o, now, onClose }: { o: TrackedObject; now: numbe
 }
 
 function Note({ o }: { o: TrackedObject }) {
-  let text: string | null = null
-  if (o.awaiting_reconfirmation) text = "This is from before the last room scan. Keepsake hasn't spotted it from the new view yet."
-  else if (o.lost_while_moving) text = 'It looked like it was being moved when it left view, so it may be somewhere else now.'
-  else if (!o.visible) text = "It's out of view right now, so it may have moved since this photo."
+  const text = o.visible ? null : "It's out of view right now, so it may have moved since this photo."
   return text ? <p className="mt-4 rounded-xl bg-caution-soft px-4 py-3 text-caution">{text}</p> : null
 }
