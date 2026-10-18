@@ -22,12 +22,10 @@ export function composeReminder(alert: ReminderAlert, timeZone?: string): string
     const where = one.place ? ` ${one.place}` : "";
     const it = plural(one.name) ? "them" : "it";
     const verb = plural(one.name) ? "were" : "was";
-    const photo = one.place ? "" : " The last photo is in Keepsake.";
-    return `${opener} Your ${noun(one.name)} ${verb} last seen${where} at ${clock(one.last_seen, timeZone)}. Check whether you have ${it}.${photo}`;
+    return `${opener} Your ${noun(one.name)} ${verb} last seen${where} at ${clock(one.last_seen, timeZone)}. Check whether you have ${it}.`;
   }
   const parts = items.map(
     (i: ReminderItem) => `${noun(i.name)} (${i.place ? `${i.place}, ` : ""}${clock(i.last_seen, timeZone)})`,
   );
-  const photo = items.every((i) => i.place) ? "" : " Last photos are in Keepsake.";
-  return `${opener} Keepsake last saw your ${join(parts)}. Check whether you have them.${photo}`;
+  return `${opener} Keepsake last saw your ${join(parts)}. Check whether you have them.`;
 }

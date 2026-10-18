@@ -52,7 +52,8 @@ also binds port 8000, so run one or the other.
   voice). `App.tsx` polls every 1.5 s.
 - `integrations/photon/`: TypeScript Photon Spectrum agent (`spectrum-ts` 12.11): polls
   `/api/reminders/alerts`, claims, checks its own E.164 allowlist (`.env`, git-ignored), sends, reports
-  `accepted`/`failed` (accepted ≠ delivered). Inbound commands: modes, I have it, remind me later,
+  `accepted`/`failed` (accepted ≠ delivered). Reminders and "where is my …" replies attach the item's
+  last-seen photo (fetched from `/api/snapshots/{id}/image`, max 3); a missing photo never blocks the text. Inbound commands: modes, I have it, remind me later,
   pause/resume, heading out, "where is my …". See its README and EVENTS.md.
 - `scripts/demo_preflight.py`, `scripts/camera_diagnostic.py`: read-only checks of a running backend.
 

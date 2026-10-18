@@ -1,14 +1,22 @@
 // Delivery transports. The alert logic only sees `Notifier`, so another channel can replace iMessage.
 
+import { attachment } from "spectrum-ts";
+
+/** A photo to send along with a message (JPEG bytes from Keepsake's photo store). */
+export interface Photo {
+  name: string;
+  data: Buffer;
+}
+
 export interface Notifier {
   readonly name: string;
-  /** Deliver one text. Rejects on failure; callers decide about retries (we don't retry). */
-  send(recipient: string, text: string): Promise<void>;
+  /** Deliver one text, then its photos. Rejects on failure; callers decide about retries (we don't). */
+  send(recipient: string, text: string, photos?: Photo[]): Promise<void>;
 }
 
 /** The part of a Spectrum space the notifier needs. */
 export interface SendableSpace {
-  send(text: string): Promise<unknown>;
+  send(...content: unknown[]): Promise<unknown>;
 }
 
 /**
@@ -18,10 +26,18 @@ export interface SendableSpace {
 export class SpectrumIMessageNotifier implements Notifier {
   readonly name = "photon-imessage";
 
-  constructor(private readonly openSpace: (recipient: string) => Promise<SendableSpace>) {}
+  constructor(
+    private readonly openSpace: (recipient: string) => Promise<SendableSpace>,
+    private readonly makeAttachment: (data: Buffer, name: string) => unknown = (data, name) =>
+      attachment(data, { mimeType: "image/jpeg", name }),
+  ) {}
 
-  async send(recipient: string, text: string): Promise<void> {
+  async send(recipient: string, text: string, photos: Photo[] = []): Promise<void> {
     const space = await this.openSpace(recipient);
-    await space.send(text);
+    if (photos.length === 0) {
+      await space.send(text);
+      return;
+    }
+    await space.send(text, ...photos.map((p) => this.makeAttachment(p.data, p.name)));
   }
 }

@@ -3,6 +3,13 @@
 
 import { normalizePhone } from "./config.ts";
 import { type KeepsakeClient, KeepsakeRefused, KeepsakeUnavailable, type Mode } from "./keepsake.ts";
+import type { Photo } from "./notifier.ts";
+
+/** A text reply, plus the item's last photo when the answer is about one. */
+export interface Reply {
+  text: string;
+  photos: Photo[];
+}
 
 export interface InboundDeps {
   keepsake: KeepsakeClient;
@@ -24,7 +31,13 @@ const MODE_NAMES: Record<Mode, string> = {
 const is = (t: string, re: RegExp) => re.test(t);
 
 /** The reply for one inbound text, or null to stay silent (unauthorized sender). */
-export async function replyTo(sender: string | undefined, text: string, deps: InboundDeps): Promise<string | null> {
+export async function replyTo(sender: string | undefined, text: string, deps: InboundDeps): Promise<Reply | null> {
+  const r = await replyText(sender, text, deps);
+  if (r === null || typeof r === "string") return r === null ? null : { text: r, photos: [] };
+  return r;
+}
+
+async function replyText(sender: string | undefined, text: string, deps: InboundDeps): Promise<string | Reply | null> {
   if (!sender || !deps.recipients.includes(normalizePhone(sender))) return null;
   const t = text.trim().toLowerCase().replace(/[.!?]+$/, "");
   if (t === "ping" || t === "hello photon") return "Photon Spectrum is connected to Keepsake.";
@@ -71,7 +84,16 @@ export async function replyTo(sender: string | undefined, text: string, deps: In
           ? "Reminders are paused right now."
           : "Nothing to check: Keepsake has no recent photo of your important items.";
     }
-    return (await k.query(text)).answer;
+    // Keepsake's own grounded answer; the photo is attached instead of being mentioned.
+    const r = await k.query(text);
+    const answer = r.answer.replace(/\s*The last photo is in Keepsake\./, "");
+    const snapshotId = r.object?.snapshot?.id;
+    if (snapshotId == null) return answer;
+    try {
+      return { text: answer, photos: [{ name: "last-seen.jpg", data: await k.photo(snapshotId) }] };
+    } catch {
+      return answer; // the text still answers the question
+    }
   } catch (err) {
     if (err instanceof KeepsakeUnavailable) return "Keepsake isn't reachable right now, so I can't check.";
     if (err instanceof KeepsakeRefused) return "Keepsake couldn't do that right now.";
