@@ -24,7 +24,7 @@ _COMMON = ["a laptop keyboard", "a carpet floor", "a person's face", "a person",
 # category -> (what the item looks like, what the detector mistakes for it)
 PROMPTS: dict[str, tuple[list[str], list[str]]] = {
     "glasses": (["a pair of eyeglasses lying on a surface", "folded glasses on a table"],
-                _COMMON + ["a person wearing glasses", "a smartphone", "a bag"]),
+                _COMMON + ["a person wearing glasses", "a smartphone", "a bag", "a backpack", "a black bag"]),
     "car key": (["a set of keys on a keyring", "car keys", "keys with a keychain tag", "a keychain"],
                 _COMMON + ["a notebook", "a sheet of paper", "a chair", "a pen"]),
     "wallet": (["a wallet", "a leather wallet"],
