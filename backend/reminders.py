@@ -6,21 +6,17 @@ the text and reports back. Nothing here does network I/O, and it never runs on t
 
 Evidence, weakest to strongest (it never claims more than it has):
   object_observed / object_reobserved  a real, photo-backed stable sighting. Not a placement.
-  placement_inferred                   fixed camera only: memory saw the item move, then settle.
   placement_confirmed                  from hand-interaction evidence (issue #5), when available.
   interaction_candidate                hand near the item: recorded, never cancels or triggers.
   possible_pickup                      cancels a pending reminder only at pickup_cancel_conf.
 
 Events come from the vision pipeline's `observations` table (backend/events.py, issues #4/#5:
 object_observed, interaction_candidate, possible_pickup, placement_confirmed), read by `seq` cursor
-on the engine's own thread. With a fixed camera, memory's "moved then settled" photo rows are also
-read as placement_inferred. Other producers can POST the same contract or call `ingest()`.
+on the engine's own thread. Other producers can POST the same contract or call `ingest()`.
 
-Separation (what makes a pending reminder due):
-  wearable    the item has been out of the wearer's view for the mode's delay. A weak signal: it
-              says the camera turned away, not that the item stayed behind.
-  fixed       a tracked person left the view (departure feed) after the placement.
-  either      an explicit check: "I'm heading out" or the manual demo trigger.
+Separation (what makes a pending reminder due): the item has been out of the wearer's view for the
+mode's delay (a weak signal: the camera turned away, not proof the item stayed behind), or an
+explicit check ("I'm heading out", or the manual demo trigger).
 
 This is a hackathon prototype for memory support, not a clinically validated monitoring device.
 """
@@ -35,8 +31,6 @@ from collections import deque
 from datetime import datetime, timezone
 
 from catalog import CATALOG
-from departure import hold_reason
-from spatial import place_phrase
 
 log = logging.getLogger("keepsake.reminders")
 
@@ -45,9 +39,9 @@ PLACEMENT_CANDIDATE, PENDING_REMINDER = "PLACEMENT_CANDIDATE", "PENDING_REMINDER
 REMINDER_SENT, CANCELLED = "REMINDER_SENT", "CANCELLED"
 
 EVENT_TYPES = ("object_observed", "object_reobserved", "interaction_candidate", "possible_pickup",
-               "placement_confirmed", "placement_inferred")
+               "placement_confirmed")
 OBSERVATION = ("object_observed", "object_reobserved")
-PLACEMENT = ("placement_confirmed", "placement_inferred")
+PLACEMENT = ("placement_confirmed",)
 MODES = ("off", "high_assistance", "everyday")
 SETTINGS_KEY = "reminder_settings"
 
@@ -55,7 +49,7 @@ SETTINGS_KEY = "reminder_settings"
 PRESETS: dict[str, dict] = {
     "high_assistance": {
         "delay": 15,                    # out of view this long after the sighting/placement
-        "triggers": ["placement_confirmed", "placement_inferred", "object_observed",
+        "triggers": ["placement_confirmed", "object_observed",
                      "interaction_then_stable"],
         "min_confidence": 0.45,
         "per_item_cooldown": 300,
@@ -68,7 +62,7 @@ PRESETS: dict[str, dict] = {
     },
     "everyday": {
         "delay": 150,
-        "triggers": ["placement_confirmed", "placement_inferred"],
+        "triggers": ["placement_confirmed"],
         "min_confidence": 0.6,
         "per_item_cooldown": 1800,
         "global_cooldown": 600,
@@ -138,15 +132,10 @@ class _Obj:
 
 
 class ReminderEngine:
-    def __init__(self, db, memory=None, modes=None, regions=None, departures=None,
-                 status_fn=None, clock=time.time, camera_mode: str = "wearable", photo_available=None):
+    def __init__(self, db, memory=None, status_fn=None, clock=time.time, photo_available=None):
         self.db = db
         self.photo_available = photo_available or (lambda photo: True)
-        self.camera_mode = "fixed" if camera_mode in ("fixed", "stationary") else "wearable"  # CTRLF_CAMERA_MODE
         self.memory = memory
-        self.modes = modes
-        self.regions = regions if regions is not None else []
-        self.departures = departures      # DepartureFeed (fixed camera separation signal)
         self.status_fn = status_fn or (lambda: {})
         self.clock = clock
         self.items = {c["object_id"]: c for c in CATALOG}
@@ -160,10 +149,7 @@ class ReminderEngine:
         self._alert_ids = itertools.count(1)
         self._last_alerted: dict[str, float] = {}
         self._last_alert_at = float("-inf")
-        self._snapshot_cursor = self._max_snapshot_id()   # only react to evidence from now on
         self._observation_cursor = self._max_observation_seq()
-        self._departure_cursor = departures.latest_id() if departures else 0
-        self._departure_at = float("-inf")
         self._last_event_time: dict[str, float] = {}
         self._last_obs: dict[str, float] = {}       # newest vision sighting per item (wearable)
         self._last_detected: dict[str, float] = {}  # last tick the item was in the live detections
@@ -181,7 +167,7 @@ class ReminderEngine:
                 s.update(json.loads(raw))
             except ValueError:
                 log.warning("unreadable reminder settings; using defaults")
-        s.pop("camera_mode", None)  # now CTRLF_CAMERA_MODE, shared with the vision pipeline
+        s.pop("camera_mode", None)  # from before Keepsake became wearable-only
         return s
 
     def _save_settings(self) -> None:
@@ -278,8 +264,8 @@ class ReminderEngine:
     def normalize(self, raw: dict) -> dict:
         """Validate an event against the contract (EVENTS.md). Raises EventError."""
         etype = raw.get("event_type")
-        if etype not in EVENT_TYPES or etype == "placement_inferred":
-            raise EventError(f"event_type must be one of {', '.join(t for t in EVENT_TYPES if t != 'placement_inferred')}")
+        if etype not in EVENT_TYPES:
+            raise EventError(f"event_type must be one of {', '.join(EVENT_TYPES)}")
         if not raw.get("event_id"):
             raise EventError("event_id is required")
         oid = self._resolve(raw.get("object_id") or raw.get("category"))
@@ -406,34 +392,7 @@ class ReminderEngine:
                 a["status"] = "cancelled"
                 a["reason"] = reason
 
-    # ---------- memory feed ----------
-    def _max_snapshot_id(self) -> int:
-        with self.db._lock:
-            row = self.db._conn.execute("SELECT MAX(id) AS m FROM snapshots").fetchone()
-        return row["m"] or 0
-
-    def _new_snapshots(self) -> list[dict]:
-        with self.db._lock:
-            rows = self.db._conn.execute(
-                "SELECT * FROM snapshots WHERE id > ? ORDER BY id LIMIT 200",
-                (self._snapshot_cursor,)).fetchall()
-        rows = [dict(r) for r in rows]
-        if rows:
-            self._snapshot_cursor = rows[-1]["id"]
-        return rows
-
-    def _from_snapshot(self, s: dict) -> dict | None:
-        """Fixed camera only: memory's "moved, then settled" photo as placement_inferred.
-
-        Plain sightings come from the observations table instead, so nothing is counted twice."""
-        if self.camera_mode != "fixed" or s["event_type"] not in ("moved", "moved_within"):
-            return None
-        return {"event_id": f"snapshot:{s['id']}", "event_type": "placement_inferred",
-                "object_id": s["object_id"], "t": _ts(s["timestamp"]) or self.clock(),
-                "confidence": s["confidence"] or 0.0, "snapshot_id": s["id"],
-                "evidence": [f"memory_{s['event_type']}"], "camera_mode": "fixed",
-                "view_id": s.get("view_id"), "source": "memory"}
-
+    # ---------- vision feed ----------
     def _max_observation_seq(self) -> int:
         if not hasattr(self.db, "get_observations"):
             return 0
@@ -465,46 +424,41 @@ class ReminderEngine:
                     self._apply(self.normalize(raw), now)
                 except EventError as e:
                     log.warning("skipped observation %s: %s", raw.get("event_id"), e)
-            for s in self._new_snapshots():
-                ev = self._from_snapshot(s) if s["object_id"] in self._objs else None
-                if ev:
-                    self._apply(ev, now)
             status = self.status_fn() or {}
             for d in status.get("detections") or []:
                 oid = self.by_category.get(d.get("category"))
                 if oid:
                     self._last_detected[oid] = now
-            hold = hold_reason(self.modes, self.memory, status, now=now) if self.modes else None
-            self._read_departures(status, hold)
+            hold = self._hold(status)
             self._expire_alerts(now)
             if not self.active() or self.paused(now):
                 return []
             return self._evaluate(now, hold)
 
-    def _read_departures(self, status: dict, hold: str | None) -> None:
-        if not self.departures:
-            return
-        if self.memory is not None:
-            self.departures.sync(status, hold, getattr(self.memory, "view_id", None))
-        for ev in self.departures.events_after(self._departure_cursor):
-            self._departure_cursor = ev["id"]
-            if ev["source"] != "manual":
-                self._departure_at = _ts(ev["at"]) or self.clock()
+    @staticmethod
+    def _hold(status: dict) -> str | None:
+        """Why the camera can't be trusted right now (its frames say nothing about separation)."""
+        camera = status.get("camera")
+        if camera not in (None, "active", "disabled"):
+            return "camera_unavailable"
+        warning = status.get("warning") or ""
+        if "black frames" in warning:
+            return "camera_dark"
+        if "frozen" in warning:
+            return "camera_frozen"
+        return None
 
     def _object(self, object_id: str) -> dict | None:
         """The item's memory. On a wearable, vision sightings and live detections count too:
         they arrive before memory has confirmed a new item (seen live: keys had no memory row)."""
         rec = self.db.get_by_category(self.items[object_id]["category"])
-        if self.camera_mode == "fixed":
-            return rec
         now = self.clock()
         seen = [t for t in (self._last_obs.get(object_id), self._last_detected.get(object_id)) if t]
         if not seen:
             return rec
         latest = max([*seen, _ts(rec["last_seen"]) if rec else 0.0])
         live = now - self._last_detected.get(object_id, float("-inf")) < 2.0
-        merged = dict(rec) if rec else {"object_id": object_id, "region": None, "view_id": None,
-                                         "lost_while_moving": False}
+        merged = dict(rec) if rec else {"object_id": object_id, "view_id": None}
         merged.update(last_seen=_iso(latest), visible=bool((rec or {}).get("visible")) or live)
         return merged
 
@@ -513,32 +467,13 @@ class ReminderEngine:
         snaps = self.db.get_snapshots(o.object_id, limit=1)
         return snaps[0] if snaps and self.photo_available(snaps[0]) else None
 
-    def _view_ok(self, rec: dict) -> bool:
-        return self.memory is None or rec.get("view_id") in (None, getattr(self.memory, "view_id", None))
-
-    def _place(self, rec: dict | None) -> str | None:
-        """A location phrase only when the memory supports it (fixed camera, current view)."""
-        if (self.camera_mode != "fixed" or not rec or not rec.get("region")
-                or not self._view_ok(rec)):
-            return None
-        return place_phrase(rec["region"], self.regions)
-
     def _blocked(self, o: _Obj, rec: dict | None, photo: dict | None, policy: dict, now: float,
                  hold: str | None) -> str | None:
         """Why a pending reminder must be cancelled now (None = still fine)."""
-        fixed = self.camera_mode == "fixed"
-        if hold in ("camera_repositioning", "camera_unavailable", "camera_dark"):
-            return hold
-        if hold == "camera_shift" and fixed:
-            return "camera_shift"  # wearable cameras move all the time; that's not unreliability
+        if hold:
+            return hold  # a disconnected, dark or frozen camera proves nothing about separation
         if rec is None or not rec.get("last_seen"):
             return "no_memory"
-        if fixed and rec.get("lost_while_moving"):
-            # A fixed camera saw it moving as it left view: likely carried. On a worn camera this
-            # flag is set by the camera's own motion, so there only possible_pickup cancels.
-            return "lost_while_moving"
-        if fixed and not self._view_ok(rec):
-            return "location_unreliable"
         if photo is None:
             return "no_photo"
         if now - (_ts(photo["timestamp"]) or 0) > policy["max_photo_age"]:
@@ -552,8 +487,6 @@ class ReminderEngine:
             return False
         if now - o.started < policy["delay"]:
             return False
-        if self.camera_mode == "fixed":
-            return self._departure_at > o.started  # someone left after it was put down
         last_seen = _ts(rec["last_seen"]) or now
         return not rec.get("visible") and now - last_seen >= policy["delay"]
 
@@ -608,7 +541,7 @@ class ReminderEngine:
                 return {"queued": False, "blocked": "paused", "items": [], "skipped": []}
             policy = self.policy()
             status = self.status_fn() or {}
-            hold = hold_reason(self.modes, self.memory, status, now=now) if self.modes else None
+            hold = self._hold(status)
             picked, skipped = [], []
             for oid in self.important():
                 category = self.items[oid]["category"]
@@ -617,9 +550,6 @@ class ReminderEngine:
                 tmp = _Obj(oid)
                 tmp.started = now  # an explicit check has no placement age
                 why = self._blocked(tmp, rec, photo, policy, now, hold)
-                if why is None and self.memory is not None \
-                        and self.memory.states().get(category, "STABLE") != "STABLE":
-                    why = "moving"  # mid-move: its location isn't settled
                 last = self._last_alerted.get(oid)
                 if why is None and last is not None and now - last < policy["per_item_cooldown"]:
                     why = "cooldown"
@@ -650,7 +580,7 @@ class ReminderEngine:
                 "object_id": o.object_id, "name": self.items[o.object_id]["name"],
                 "last_seen": rec["last_seen"], "photo_at": photo["timestamp"] if photo else None,
                 "snapshot_id": photo["id"] if photo else None,
-                "place": self._place(rec), "evidence": o.evidence or "stored_observation",
+                "place": None, "evidence": o.evidence or "stored_observation",
                 "episode": o.episode})
         self._alerts[alert["id"]] = alert
         self._last_alert_at = now  # global cooldown starts when an alert is queued
@@ -687,7 +617,7 @@ class ReminderEngine:
                 raise PermissionError(f"alert {alert_id} cancelled")
             now = self.clock()
             status = self.status_fn() or {}
-            hold = hold_reason(self.modes, self.memory, status, now=now) if self.modes else None
+            hold = self._hold(status)
             for item in list(a["items"]):
                 o = self._objs[item["object_id"]]
                 rec = self._object(o.object_id)
@@ -784,7 +714,7 @@ class ReminderEngine:
         now = self.clock()
         with self._lock:
             p = self.settings.get("paused_until")
-            return {"settings": {**self.settings, "camera_mode": self.camera_mode,
+            return {"settings": {**self.settings, "camera_mode": "wearable",
                                  "paused_until": None if p in (None, -1) else _iso(p),
                                  "paused": self.paused(now)},
                     "policy": self.policy(), "active": self.active(),

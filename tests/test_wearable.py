@@ -7,7 +7,7 @@ import pytest
 import events as E
 from conftest import BED, DESK, STEP, T0, Clock, obs
 from database import Database
-from memory import SpatialMemory
+from memory import ItemMemory
 from wearable import Hand, InteractionDetector, WearableObserver
 
 
@@ -132,15 +132,14 @@ def test_resighting_after_absence_respects_cooldown():
     assert f.types() == [E.OBJECT_OBSERVED, E.OBJECT_OBSERVED]
 
 
-def test_wearable_memory_never_claims_movement(tmp_path, regions):
+def test_wearable_memory_never_claims_movement(tmp_path):
     db = Database(tmp_path / "w.db")
-    mem = SpatialMemory(db, regions, camera_mode="wearable")
-    clock = Clock(mem)
+    clock = Clock(ItemMemory(db))
     clock.frames(6, obs("bottle", DESK))
     clock.frames(6, obs("bottle", BED))  # same bottle, the wearer turned around
-    assert [e["event_type"] for e in clock.events] == ["first_seen", "reconfirmed"]
-    assert [e["event_type"] for e in db.get_events()] == ["first_seen"]
-    assert db.get_by_category("bottle")["region"] == "Bed"  # last seen there, not "moved there"
+    assert [e["event_type"] for e in clock.events] == ["first_seen"]
+    assert db.get_events() == []  # no movement history at all
+    assert db.get_by_category("bottle")["region"] is None  # and no room area
     db.close()
 
 
@@ -265,11 +264,8 @@ def test_observations_api(tmp_path, monkeypatch):
     import importlib
 
     from fastapi.testclient import TestClient
-    from conftest import TEST_AREAS
-    from spatial import save_regions
-    save_regions(TEST_AREAS, tmp_path / "regions.json")
-    for k, v in {"CAMERA_ENABLED": "0", "DB_PATH": str(tmp_path / "api.db"),
-                 "SNAPSHOT_DIR": str(tmp_path / "snaps"), "REGIONS": str(tmp_path / "regions.json")}.items():
+    for k, v in {"CAMERA_ENABLED": "0", "REMINDERS_THREAD": "0", "DB_PATH": str(tmp_path / "api.db"),
+                 "SNAPSHOT_DIR": str(tmp_path / "snaps"), "ENV_FILE": str(tmp_path / "none.env")}.items():
         monkeypatch.setenv(f"CTRLF_{k}", v)
     import main
     main = importlib.reload(main)

@@ -15,14 +15,11 @@ from collections import deque
 import cv2
 import numpy as np
 
-from furniture import FURNITURE, propose_regions
 from cameras import find_camera, list_cameras
 from catalog import MIN_CONF, SUPPORTED
-from memory import ALIASES, Observation, SpatialMemory, display_name
-from modes import MONITORING, ModeController
+from memory import ALIASES, ItemMemory, Observation, display_name
 from presence import PresenceTracker
 from snapshots import SnapshotStore
-from spatial import Region, locate
 from wearable import Hand, InteractionDetector, WearableObserver
 import events as E
 
@@ -110,40 +107,33 @@ def merge_hands(primary: list[Hand], extra: list[Hand], same: float = 0.3) -> li
 
 
 class VisionWorker(threading.Thread):
-    def __init__(self, memory: SpatialMemory, regions: list[Region], snapshots: SnapshotStore,
-                 modes: ModeController, camera_index: int | str = 0, model_path: str = "yolo11n.pt",
-                 conf: float = 0.4, fps: float = 5.0, frame_width: int = 1280,
-                 camera_shift_motion: float = 0.5, scan_model_path: str | None = None,
-                 device: str | None = None, preview_width: int = 640,
+    def __init__(self, memory: ItemMemory, snapshots: SnapshotStore, camera_index: int | str = 0,
+                 model_path: str = "yolov8s-worldv2.pt", conf: float = 0.15, fps: float = 5.0,
+                 frame_width: int = 1280, device: str | None = None, preview_width: int = 640,
                  presence: PresenceTracker | None = None, camera_name: str | None = None,
-                 camera_mode: str = "wearable", hands_enabled: bool = True):
+                 hands_enabled: bool = True, frozen_seconds: float = 5.0):
         super().__init__(daemon=True, name="vision")
         self.memory = memory
-        self.regions = regions  # shared list; updated in place by calibration
         self.snapshots = snapshots
-        self.modes = modes
         self.camera_index = camera_index
         self.camera_name = camera_name  # e.g. "iPhone": wins over camera_index (see cameras.py)
         self.model_path = model_path
-        self.scan_model_path = scan_model_path  # larger model used only by Scan room
-        self._scan_model = None
         self._label: dict[str, str] = {}  # YOLO-World prompt -> catalog category
         self.conf = conf
         self.interval = 1.0 / max(fps, 0.5)
         self.frame_width = frame_width  # detection resolution; small items across a room need ~1280
         self.preview_width = preview_width
         self.device = device or pick_device()
-        self.camera_shift_motion = camera_shift_motion
         self.motion = MotionDetector()
         self.presence = presence or PresenceTracker()
-        self.camera_mode = camera_mode  # "wearable" (body-worn, always moving) or "fixed"
-        self.observer = WearableObserver(camera_mode)            # issue #4: object_observed
-        self.interactions = InteractionDetector(camera_mode)     # issue #5: hand evidence
+        self.observer = WearableObserver("wearable")             # issue #4: object_observed
+        self.interactions = InteractionDetector("wearable")      # issue #5: hand evidence
         self.hands_enabled = hands_enabled
         self.hands = None  # hands.HandDetector, created on the worker thread
         self._ring: deque[tuple[int, np.ndarray]] = deque(maxlen=12)  # (frame_id, snapshot-size frame)
         self._frame_id = 0
-        self._shift_frames = 0
+        self._still_frames = 0  # consecutive frames with exactly zero change: a frozen feed
+        self._frozen_frames = max(1, int(frozen_seconds * fps))
         self._halt = threading.Event()
         self._jpeg: bytes | None = None
         self._jpeg_id = 0
@@ -151,7 +141,7 @@ class VisionWorker(threading.Thread):
         self.status = {"camera": "starting", "error": None, "warning": None, "fps": 0.0,
                        "device": self.device, "inference_width": frame_width,
                        "motion": 0.0, "detections": [], "model": model_path,
-                       "camera_mode": camera_mode, "camera_motion": 0.0,
+                       "camera_mode": "wearable", "camera_motion": 0.0,
                        "hands": "off", "hands_reason": None, "interactions": {},
                        **self.presence.status()}
 
@@ -182,7 +172,6 @@ class VisionWorker(threading.Thread):
                 self._items_model = YOLO(str(items_path))
                 log.info("custom items model %s: %s", items_path.name, list(self._items_model.names.values()))
             custom = (set(self._items_model.names.values()) - NOT_TRAINED) if self._items_model else set()
-            self.memory.loose_categories = custom  # trained-model boxes wobble more than tracked ones
             if "world" in str(self.model_path).lower():  # open vocabulary: tell it what to look for
                 from catalog import CATALOG
                 try:
@@ -254,28 +243,17 @@ class VisionWorker(threading.Thread):
         frame = self._resize(full, self.frame_width)
         self._ring.append((self._frame_id, full))
 
+        global_motion = self.motion.update(frame)
+        self.status["motion"] = round(global_motion, 3)
+        # Real sensors always have some noise; exactly zero change for seconds is a frozen feed
+        # (Continuity Camera pauses while the iPhone is unlocked or in use).
+        self._still_frames = self._still_frames + 1 if global_motion == 0.0 else 0
         warning = None
         if float(frame[::8, ::8].mean()) < 8:  # e.g. Continuity Camera paused or lens covered
             warning = "The camera is sending black frames. Check the lens isn't covered."
-        global_motion = self.motion.update(frame)
-        self.status["motion"] = round(global_motion, 3)
-
-        if self.modes.reset_tracker:  # new viewpoint: drop ByteTrack identities
-            self.modes.reset_tracker = False
-            self._reset_tracker(model)
-        self.modes.on_frame(global_motion, lambda: self._scan(model, full))
-
-        # Whole-view change outside Reposition mode: hold location updates instead of logging moves.
-        # A worn camera moves all the time; there the memory never reports moves (see memory.py).
-        monitoring = self.modes.mode == MONITORING
-        fixed = self.camera_mode == "fixed"
-        self._shift_frames = self._shift_frames + 1 if global_motion > self.camera_shift_motion else 0
-        if fixed and monitoring and self._shift_frames >= 3:
-            self.memory.suspend(3.0)
-            self.status["camera_shift_at"] = time.time()
-        if fixed and monitoring and time.time() - self.status.get("camera_shift_at", 0) < 10:
-            warning = warning or ("The camera view changed a lot. If you moved the camera, "
-                                  "press Scan room to update its areas.")
+        elif self._still_frames >= self._frozen_frames:
+            warning = ("The camera picture is frozen. If it's an iPhone, lock it and keep it still "
+                       "so Continuity Camera resumes.")
         self.status["warning"] = warning
 
         hands = []
@@ -283,23 +261,16 @@ class VisionWorker(threading.Thread):
             obs = self._detect(model, frame, class_ids) + self._detect_items(frame)
             for o in obs:
                 o.motion = self.motion.local(o.bbox)
-            if monitoring:
-                if self.presence.update(obs) == "left":
-                    log.info("person left the view")
-            else:  # camera is being moved: nobody "leaves"
-                self.presence.reset()
+            if self.presence.update(obs) == "left":
+                log.info("person left the view")
             self.status.update(self.presence.status())
-            events = self.memory.observe(obs, frame_id=self._frame_id)
-            for ev in events:
-                if fixed:  # worn camera: photos come from the observation events below
-                    self.snapshots.submit(ev, self._frame_for(ev.get("frame_id")))
-                log.info("%s %s -> %s", ev["event_type"], ev["name"], ev["region"])
-            if monitoring:
-                mp_hands = self.hands.detect(frame) if self.hands else []
-                hands = merge_hands(mp_hands, [Hand(o.bbox, o.confidence) for o in obs
-                                               if o.category == HAND and o.confidence >= HAND_CONF])
-                self.status["hands_in_view"] = {"mediapipe": len(mp_hands), "total": len(hands)}
-                self._observe_wearable([o for o in obs if o.category != HAND], hands)
+            for ev in self.memory.observe(obs, frame_id=self._frame_id):
+                log.info("%s %s", ev["event_type"], ev["name"])  # photos come from observation events
+            mp_hands = self.hands.detect(frame) if self.hands else []
+            hands = merge_hands(mp_hands, [Hand(o.bbox, o.confidence) for o in obs
+                                           if o.category == HAND and o.confidence >= HAND_CONF])
+            self.status["hands_in_view"] = {"mediapipe": len(mp_hands), "total": len(hands)}
+            self._observe_wearable([o for o in obs if o.category != HAND], hands)
         except Exception as e:  # noqa: BLE001
             log.exception("inference failed")
             if self.device != "cpu":  # e.g. an MPS op that isn't supported: fall back for good
@@ -332,50 +303,16 @@ class VisionWorker(threading.Thread):
         log.info("%s %s (%.2f) %s", ev["event_type"], ev["name"], ev["confidence"], ",".join(ev["evidence"]))
         if ev["event_type"] in PHOTO_EVENTS:
             photo = {"object_id": ev["object_id"], "event_type": ev["event_type"],
-                     "timestamp": ev["timestamp"], "bbox": ev["bbox"],
-                     "region": locate((ev["bbox"][0] + ev["bbox"][2]) / 2, (ev["bbox"][1] + ev["bbox"][3]) / 2,
-                                      self.regions),
+                     "timestamp": ev["timestamp"], "bbox": ev["bbox"], "region": None,
                      "confidence": ev["confidence"], "view_id": ev["view_id"]}
             self.snapshots.submit(photo, self._frame_for(ev["frame_id"]),
                                   on_saved=lambda sid, eid=ev["event_id"]: db.set_observation_snapshot(eid, sid))
-
-    def _scan(self, model, reference: np.ndarray) -> tuple[bytes | None, list[dict]]:
-        """Scan room: detect furniture over the last few (steady) frames and propose areas."""
-        if self._scan_model is None and self.scan_model_path:
-            try:
-                from ultralytics import YOLO
-                self._scan_model = YOLO(self.scan_model_path)
-            except Exception:  # noqa: BLE001
-                log.exception("scan model unavailable; using the tracking model")
-                self.scan_model_path = None
-        model = self._scan_model or model
-        ids = [i for i, n in model.names.items() if n in FURNITURE]
-        per_frame = []
-        for _, f in list(self._ring)[-5:]:
-            small = self._resize(f, self.frame_width)
-            h, w = small.shape[:2]
-            res = model.predict(small, conf=0.25, classes=ids, imgsz=self.frame_width,
-                                device=self.device, verbose=False)[0]
-            per_frame.append([(model.names[int(c)], float(cf), (b[0] / w, b[1] / h, b[2] / w, b[3] / h))
-                              for b, c, cf in zip(res.boxes.xyxy.tolist(), res.boxes.cls.tolist(),
-                                                  res.boxes.conf.tolist())])
-        proposal = propose_regions(per_frame)
-        log.info("scan found %s", [p["name"] for p in proposal])
-        return self._encode(reference, 85), proposal
 
     def _frame_for(self, frame_id: int | None) -> np.ndarray | None:
         for fid, f in reversed(self._ring):
             if fid == frame_id:
                 return f
         return None
-
-    @staticmethod
-    def _reset_tracker(model) -> None:
-        try:
-            for t in model.predictor.trackers:
-                t.reset()
-        except Exception:  # noqa: BLE001
-            model.predictor = None  # forces a fresh predictor + tracker on the next call
 
     def _open_camera(self):
         index = self.camera_index
@@ -449,11 +386,6 @@ class VisionWorker(threading.Thread):
                  people: list[Observation] = (), hands=()) -> None:
         h, w = frame.shape[:2]
         out = frame.copy()
-        for r in list(self.regions):  # region overlays
-            p0, p1 = (int(r.x0 * w), int(r.y0 * h)), (int(r.x1 * w) - 1, int(r.y1 * h) - 1)
-            cv2.rectangle(out, p0, p1, (235, 235, 235), 1)
-            cv2.putText(out, r.name, (p0[0] + 6, p0[1] + 18), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5, (245, 245, 245), 1, cv2.LINE_AA)
         for o, color in [(p, (230, 160, 60)) for p in people] + [(o, (90, 200, 120)) for o in obs]:
             x0, y0, x1, y1 = o.bbox  # people in blue, tracked items in green
             p0, p1 = (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h))
@@ -464,10 +396,6 @@ class VisionWorker(threading.Thread):
         for hd in hands:  # MediaPipe hands, for checking interaction evidence live
             x0, y0, x1, y1 = hd.bbox
             cv2.rectangle(out, (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h)), (230, 160, 60), 1)
-        if self.modes.mode != MONITORING:
-            cv2.rectangle(out, (0, 0), (w, 28), (40, 40, 40), -1)
-            cv2.putText(out, "Monitoring paused", (10, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                        (230, 230, 230), 1, cv2.LINE_AA)
         jpg = self._encode(out)
         if jpg:
             with self._jpeg_lock:
