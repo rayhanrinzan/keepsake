@@ -21,7 +21,7 @@ test('real HTTP memory -> query -> claim -> mocked send -> result, once', {skip:
   assert.match(answer.answer, /last saw/);
   assert.doesNotMatch(answer.answer, /side of|desk|couch/i);
   const memory = answer as typeof answer & { object: any };
-  assert.equal(memory.object.region, null);
+  assert.equal("region" in memory.object, false);
   const card = renderToStaticMarkup(createElement(ObjectList, {
     objects: [memory.object], now: Date.now(), highlightId: null, onOpen: () => {},
   }));

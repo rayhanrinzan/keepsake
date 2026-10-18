@@ -10,9 +10,6 @@ The event contract is Amanda's: **`backend/events.py`** (issues #4 and #5), also
 photo is written. The reminder engine reads that table by `seq` cursor on its own thread, so it
 never slows the camera loop. Events recorded before the backend started are ignored.
 
-With `CTRLF_CAMERA_MODE=fixed`, the engine also reads memory's "moved, then settled" photo rows as
-`placement_inferred`. A fixed camera really can see an item move; a worn one can't.
-
 ## What each event does to a reminder
 
 | `event_type` (events.py) | High-Assistance | Everyday |
@@ -23,7 +20,7 @@ With `CTRLF_CAMERA_MODE=fixed`, the engine also reads memory's "moved, then sett
 | `placement_confirmed` | Starts a reminder (replaces any older one) | Starts a reminder if conf ≥ 0.6 |
 
 A reminder becomes due once the item has been **out of the wearer's view** for the mode's delay
-(15 s or 150 s). On a fixed camera it's due once a tracked person leaves. It needs a real photo:
+(15 s or 150 s). It needs a real photo:
 a placement whose photo doesn't arrive within 15 s is dropped. See the
 [README](README.md) for every cancellation rule.
 

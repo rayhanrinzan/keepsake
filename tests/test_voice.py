@@ -26,7 +26,6 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setenv("CTRLF_CAMERA_ENABLED", "0")
     monkeypatch.setenv("CTRLF_DB_PATH", str(tmp_path / "api.db"))
     monkeypatch.setenv("CTRLF_SNAPSHOT_DIR", str(tmp_path / "snaps"))
-    monkeypatch.setenv("CTRLF_REGIONS", str(tmp_path / "regions.json"))
     monkeypatch.setenv("CTRLF_ENV_FILE", str(tmp_path / "missing.env"))  # never read the real key
     monkeypatch.delenv("XAI_API_KEY", raising=False)
     import main

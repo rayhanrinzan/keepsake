@@ -189,7 +189,7 @@ def run_checks(backend, frontend, *, get=fetch, sleep=time.sleep, interval=1,
     if reminder_settings is not None:
         add('WARN', 'Reminder policy accessible; Photon agent connection and handset receipt still unverified')
     else:
-        add('WARN', 'Legacy departure readiness unverified; inspect the agent locally (its GET routes can emit events)')
+        add('WARN', 'Reminder policy not reachable; is the backend current?')
     env = os.environ if environ is None else environ
     configured = all(env.get(k) for k in ('PROJECT_ID', 'PROJECT_SECRET', 'ALERT_RECIPIENTS'))
     add('WARN', 'Photon configuration present in this shell; agent connectivity/delivery unverified' if configured

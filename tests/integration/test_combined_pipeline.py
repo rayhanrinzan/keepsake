@@ -19,9 +19,9 @@ LOCAL = {'X-Keepsake-Local': '1'}
 
 @pytest.fixture
 def combined(tmp_path, monkeypatch):
-    values = {'CAMERA_ENABLED': '0', 'REMINDERS_THREAD': '0', 'CAMERA_MODE': 'wearable',
+    values = {'CAMERA_ENABLED': '0', 'REMINDERS_THREAD': '0',
               'DB_PATH': str(tmp_path/'memory.db'), 'SNAPSHOT_DIR': str(tmp_path/'photos'),
-              'REGIONS': str(tmp_path/'regions.json'), 'ENV_FILE': str(tmp_path/'missing.env')}
+              'ENV_FILE': str(tmp_path/'missing.env')}
     for name, value in values.items():
         monkeypatch.setenv('CTRLF_' + name, value)
     monkeypatch.delenv('XAI_API_KEY', raising=False)
@@ -30,7 +30,7 @@ def combined(tmp_path, monkeypatch):
     clock = [T0.timestamp()]
     main.reminders.clock = lambda: clock[0]
     frame = np.full((80, 120, 3), 128, np.uint8)
-    worker = SimpleNamespace(memory=main.memory, regions=main.regions, snapshots=main.snapshots,
+    worker = SimpleNamespace(memory=main.memory, snapshots=main.snapshots,
                              _frame_for=lambda _: frame)
     with TestClient(main.app, raise_server_exceptions=False) as client:
         yield SimpleNamespace(main=main, client=client, clock=clock, worker=worker, frame=frame)
@@ -257,7 +257,7 @@ def test_newer_observation_updates_existing_memory_time(combined):
     record(w, newer)
     result = w.client.post('/api/query', json={'text':'bottle'}).json()
     assert result['object']['last_seen'] == newer['timestamp']
-    assert result['object']['region'] is None
+    assert 'region' not in result['object']
 
 
 def test_pickup_inference_does_not_fabricate_a_visual_memory(combined):
@@ -305,4 +305,4 @@ def test_wearable_objects_carry_no_room_position(combined):
                              'view_id': w.main.memory.view_id, 'lost_while_moving': False})
     o = w.client.get('/api/objects/bottle').json()
     assert o['seen'] and o['snapshot'] is not None
-    assert (o['region'], o['x'], o['y']) == (None, None, None)
+    assert not {'region', 'x', 'y'} & set(o)
