@@ -39,6 +39,10 @@ PROMPTS: dict[str, tuple[list[str], list[str]]] = {
     "backpack": (["a backpack", "a backpack on the floor"],
                  _COMMON + ["a laptop screen", "a computer screen", "a jacket", "a chair", "a pillow"]),
 }
+# Which items get the check. Keys and AirPods are left to the trained model: live, CLIP was rejecting
+# the real ones, and they had few look-alike hits. Comma-separated categories, e.g. "wallet,glasses".
+CHECKED = {c.strip() for c in os.getenv("CTRLF_VERIFY_ITEMS", "wallet,glasses,bottle,backpack").split(",")
+           if c.strip()}
 MIN_SCORE = 0.25  # the item's share of CLIP's probability must also reach this
 # Boxes smaller than this share of the frame are dropped before anything else: on a chest camera your
 # own items are close, and the tiny far-off boxes were nearly all false hits (and too small for CLIP).
@@ -116,7 +120,7 @@ class ClipVerifier:
         now = time.monotonic() if now is None else now
         verdict, fresh = {}, []
         for o in observations:
-            if o.category in PROMPTS and o.bbox:
+            if o.category in PROMPTS and o.category in CHECKED and o.bbox:
                 cached = self._cached(o, now)
                 if cached is None:
                     fresh.append(o)

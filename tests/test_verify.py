@@ -21,8 +21,8 @@ FRAME = np.zeros((360, 640, 3), np.uint8)
 
 
 def test_lookalikes_are_dropped_and_real_items_kept():
-    v = verifier({"wallet": (0.02, 0.9), "glasses": (0.98, 0.01), "car key": (0.6, 0.1)})
-    shoe_as_wallet, glasses, keys = obs("wallet"), obs("glasses"), obs("car key")
+    v = verifier({"wallet": (0.02, 0.9), "glasses": (0.98, 0.01), "bottle": (0.6, 0.1)})
+    shoe_as_wallet, glasses, keys = obs("wallet"), obs("glasses"), obs("bottle")
     assert v.keep(FRAME, [shoe_as_wallet, glasses, keys]) == [glasses, keys]
 
 
@@ -74,3 +74,9 @@ def test_verdicts_are_cached_briefly_for_a_box_in_the_same_place():
     v.keep(FRAME, [obs("wallet", pos=(0.8, 0.8))], now=0.6)  # moved: checked again
     v.keep(FRAME, [obs("wallet")], now=2.0)  # expired: checked again
     assert v.calls == 3
+
+
+def test_keys_and_airpods_skip_the_check_by_default():
+    v = verifier({})  # would fail if asked to score anything
+    stuff = [obs("car key"), obs("airpods case")]
+    assert v.keep(FRAME, stuff) == stuff

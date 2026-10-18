@@ -185,7 +185,9 @@ class VisionWorker(threading.Thread):
             if "world" in str(self.model_path).lower():  # open vocabulary: tell it what to look for
                 from catalog import CATALOG
                 try:
-                    model.set_classes([c for c in SUPPORTED if verified or c not in custom] + [PERSON, HAND])
+                    from verify import CHECKED
+                    model.set_classes([c for c in SUPPORTED if (verified and c in CHECKED) or c not in custom]
+                                      + [PERSON, HAND])
                 except ImportError as e:  # YOLO-World encodes the prompts with CLIP
                     raise RuntimeError(
                         "YOLO-World needs CLIP: run .venv/bin/pip install -r backend/requirements.txt") from e
