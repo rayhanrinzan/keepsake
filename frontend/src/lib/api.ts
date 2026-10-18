@@ -83,6 +83,8 @@ export interface QueryResult {
   found: boolean
   answer: string
   object: TrackedObject | null
+  /** null when the question didn't name an item Keepsake knows. */
+  category?: string | null
 }
 
 export type VoiceProvider = 'browser' | 'grok'

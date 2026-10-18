@@ -13,13 +13,13 @@ Edit this list to change what Keepsake tracks; the API and frontend read it from
 from __future__ import annotations
 
 CATALOG: list[dict] = [
-    {"category": "bottle", "name": "Water Bottle", "icon": "bottle", "min_conf": 0.35,
+    {"category": "bottle", "name": "Water Bottle", "icon": "bottle", "min_conf": 0.55,
      "aliases": ["water bottle", "bottle", "drink", "flask"]},
-    {"category": "car key", "name": "Keys", "icon": "keys", "min_conf": 0.25,
+    {"category": "car key", "name": "Keys", "icon": "keys", "min_conf": 0.5,
      "aliases": ["keys", "key", "car keys", "house keys", "keychain"]},
-    {"category": "wallet", "name": "Wallet", "icon": "wallet", "min_conf": 0.6,
+    {"category": "wallet", "name": "Wallet", "icon": "wallet", "min_conf": 0.5,
      "aliases": ["wallet", "card holder"]},
-    {"category": "airpods case", "name": "AirPods", "icon": "airpods", "min_conf": 0.3,
+    {"category": "airpods case", "name": "AirPods", "icon": "airpods", "min_conf": 0.5,
      "aliases": ["airpods", "air pods", "earbuds", "earphones", "headphones", "airpods case"]},
     {"category": "glasses", "name": "Glasses", "icon": "glasses", "min_conf": 0.35,
      "aliases": ["glasses", "eyeglasses", "spectacles", "glasses case", "sunglasses"]},

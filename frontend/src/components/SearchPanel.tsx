@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { LoaderCircle, Mic, Search, Square } from 'lucide-react'
 import { api, ApiError } from '../lib/api'
 import type { QueryResult, TrackedObject } from '../lib/api'
-import { listenOnce, speak, speechInputSupported, stopVoice, VoiceError } from '../lib/voice'
+import { listenOnce, pauseWake, resumeWake, speak, speechInputSupported, stopVoice, VoiceError } from '../lib/voice'
+import type { WakeState } from '../lib/voice'
 
 /** Conversation: IDLE → PROMPTING → LISTENING → LOOKING_UP → RESPONDING → IDLE */
 type Phase = 'IDLE' | 'PROMPTING' | 'LISTENING' | 'LOOKING_UP' | 'RESPONDING'
@@ -31,9 +32,22 @@ function whichItem(objects: TrackedObject[]) {
   return all.length ? `Okay, which item? I can look for your ${joinList(all, 'or')}.` : 'Okay, which item?'
 }
 
-export function SearchPanel({ onResult, prompt, objects = [] }: {
+const WAKE_LABEL: Record<WakeState, string> = {
+  off: 'Hands-free is off.',
+  listening: 'Hands-free is on. Just say “Where are my keys?”',
+  paused: 'Hands-free is on.',
+  blocked: 'Hands-free needs the microphone. Allow it in your browser settings.',
+  unsupported: '',
+}
+
+export function SearchPanel({ onResult, prompt, wake, onWakeHandled, wakeState, onToggleWake, objects = [] }: {
   onResult: (r: QueryResult) => void
   objects?: TrackedObject[]
+  /** Someone said a wake phrase like "where are my keys". A new id starts a lookup. */
+  wake?: { id: number; text: string } | null
+  onWakeHandled?: () => void
+  wakeState?: WakeState
+  onToggleWake?: () => void
   /** Ask unprompted (e.g. someone walked out of view). A new id starts a new conversation. */
   prompt?: { id: number; text: string } | null
 }) {
@@ -47,7 +61,23 @@ export function SearchPanel({ onResult, prompt, objects = [] }: {
   const phaseRef = useRef<Phase>('IDLE')
   phaseRef.current = phase
 
-  useEffect(() => () => stopVoice(), [])
+  useEffect(() => () => {
+    stopVoice()
+    resumeWake() // don't leave hands-free paused if we unmount mid-conversation
+  }, [])
+
+  // Hands-free listening steps aside while Keepsake talks or asks, so it doesn't hear itself.
+  useEffect(() => {
+    if (phase === 'IDLE') resumeWake()
+    else pauseWake()
+  }, [phase])
+
+  useEffect(() => {
+    if (!wake) return
+    onWakeHandled?.()
+    if (phaseRef.current === 'IDLE') startFromWake(wake.text)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wake?.id])
 
   useEffect(() => {
     // Don't interrupt a conversation that's already going.
@@ -55,7 +85,7 @@ export function SearchPanel({ onResult, prompt, objects = [] }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prompt?.id])
 
-  async function lookUp(q: string, id: number, spoken: boolean) {
+  async function lookUp(q: string, id: number, spoken: boolean, askIfUnknown = false): Promise<void> {
     setPhase('LOOKING_UP')
     let r: QueryResult
     try {
@@ -71,6 +101,15 @@ export function SearchPanel({ onResult, prompt, objects = [] }: {
       return
     }
     if (id !== run.current) return
+    if (askIfUnknown && !r.category) {
+      // "Where is my…" with no item (or one we don't track): ask which item instead of apologising.
+      const follow = whichItem(objects)
+      setAnswer(follow)
+      const said = await ask(follow, id)
+      if (said === null) return
+      if (DECLINE.test(said)) return declined(id)
+      return lookUp(said, id, spoken)
+    }
     setAnswer(r.answer)
     onResult(r)
     setPhase('RESPONDING')
@@ -129,6 +168,16 @@ export function SearchPanel({ onResult, prompt, objects = [] }: {
     await lookUp(said, id, true)
   }
 
+  /** Started hands-free: `said` is what followed the wake phrase, e.g. "where are my keys". */
+  async function startFromWake(said: string) {
+    const id = ++run.current
+    stopVoice()
+    setError(null)
+    setAnswer(null)
+    setHeard(said)
+    await lookUp(said, id, true, true)
+  }
+
   function stop() {
     run.current++
     stopVoice()
@@ -173,6 +222,18 @@ export function SearchPanel({ onResult, prompt, objects = [] }: {
           />
         </form>
       </div>
+
+      {wakeState && wakeState !== 'unsupported' && onToggleWake && (
+        <div className="flex items-center justify-between gap-3 px-1 pt-2.5 text-[13px] text-muted">
+          <span className="flex items-center gap-2">
+            {wakeState === 'listening' && <span aria-hidden className="size-2 rounded-full bg-live" />}
+            {WAKE_LABEL[wakeState]}
+          </span>
+          <button onClick={onToggleWake} className="shrink-0 font-medium hover:text-ink">
+            {wakeState === 'off' || wakeState === 'blocked' ? 'Turn on' : 'Turn off'}
+          </button>
+        </div>
+      )}
 
       {(busy || answer || error || heard) && (
         <div className="space-y-1 px-1 pt-3 pb-1" aria-live="polite">

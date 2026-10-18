@@ -262,9 +262,8 @@ def query(q: Query):
         if obj["snapshot"]:
             answer += " The last photo is in Keepsake."
         answer += " It may have moved since."
-        return {"found": True, "answer": answer, "object": obj}
-    return {"found": r["found"], "answer": r["answer"], "object": obj}
-
+        return {"found": True, "answer": answer, "object": obj, "category": r["category"]}
+    return {"found": r["found"], "answer": r["answer"], "object": obj, "category": r["category"]}
 
 # ---------- settings & privacy ----------
 
