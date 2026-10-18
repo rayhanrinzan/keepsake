@@ -7,20 +7,18 @@ export interface Settings {
   voiceVolume: number // 0..1, how loud Keepsake speaks
   voiceRate: number // 0.7 slow .. 1 normal
   listenAfterSpeaking: boolean
-  assist: Assist // how much Keepsake leads the conversation
+  assist: Assist // how often Keepsake checks in
+  speakFirst: boolean // Keepsake asks "What are you looking for?" when the mic is tapped
 }
 
-/**
- * More help: Keepsake speaks first ("What are you looking for?") and checks in often to ask whether
- * they're forgetting something. Some help: speaks first and checks in now and then. Less help: just
- * listens when they tap the microphone, and never checks in.
- */
-export type Assist = 'more' | 'some' | 'less'
+/** How much help, from less to more: how often Keepsake checks in to ask if they're forgetting something. */
+export const ASSIST = ['less', 'normal', 'more'] as const
+export type Assist = (typeof ASSIST)[number]
 
-// How often Keepsake checks in, in minutes, for each level (none for less help).
-export const CHECK_IN: Record<Assist, number | null> = { more: 10, some: 45, less: null }
+// How often Keepsake checks in, in minutes, for each level (never for less help).
+export const CHECK_IN: Record<Assist, number | null> = { less: null, normal: 45, more: 10 }
 
-const DEFAULTS: Settings = { textScale: 1, voiceVolume: 1, voiceRate: 0.85, listenAfterSpeaking: false, assist: 'some' }
+const DEFAULTS: Settings = { textScale: 1, voiceVolume: 1, voiceRate: 0.85, listenAfterSpeaking: false, assist: 'normal', speakFirst: true }
 const KEY = 'keepsake.settings'
 
 const Ctx = createContext<{ s: Settings; set: (p: Partial<Settings>) => void }>({ s: DEFAULTS, set: () => {} })
@@ -28,7 +26,11 @@ const Ctx = createContext<{ s: Settings; set: (p: Partial<Settings>) => void }>(
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [s, setS] = useState(DEFAULTS)
   useEffect(() => {
-    AsyncStorage.getItem(KEY).then(v => v && setS({ ...DEFAULTS, ...JSON.parse(v) })).catch(() => {})
+    AsyncStorage.getItem(KEY).then(v => v && setS(() => {
+      const next = { ...DEFAULTS, ...JSON.parse(v) }
+      if (!ASSIST.includes(next.assist)) next.assist = DEFAULTS.assist // saved by an older version
+      return next
+    })).catch(() => {})
   }, [])
   const set = (p: Partial<Settings>) =>
     setS(prev => {

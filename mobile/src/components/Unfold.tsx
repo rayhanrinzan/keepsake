@@ -18,6 +18,8 @@ const native = Platform.OS !== 'web'
 const ICON_W = 52
 const ICON_H = 29
 const GAP = 12
+const FADE = 70 // how far from the key a letter starts to fade as it slides in
+const WORD = 'keepsake'.split('')
 
 type Pt = [number, number]
 type Vertex = { flat: Pt; ball: Pt; start: number }
@@ -101,7 +103,8 @@ const pts = (list: Pt[]) => list.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}
 /**
  * The opening: on a white page, a crumpled ball of black paper, white on the back, pops open
  * in stop-motion clumps and is pressed flat into the black page. The logo settles in, the word
- * squeezes into the key, and the key flies to the top left corner where home keeps it. Tap to skip.
+ * slides behind the key as the key moves to the centre, then the key flies to the top left corner
+ * where home keeps it. Tap to skip.
  */
 export function Unfold({ onDone }: { onDone: () => void }) {
   const { width: w, height: h } = useWindowDimensions()
@@ -110,6 +113,7 @@ export function Unfold({ onDone }: { onDone: () => void }) {
   const [frame, setFrame] = useState(0)
   const inset = useSafeAreaInsets()
   const [tw, setTw] = useState(150) // the word's width, measured once it's laid out
+  const [lx, setLx] = useState<number[]>([]) // where each letter starts within the word
   const logo = useRef(new Animated.Value(0)).current
   const squeeze = useRef(new Animated.Value(0)).current
   const fly = useRef(new Animated.Value(0)).current
@@ -140,7 +144,7 @@ export function Unfold({ onDone }: { onDone: () => void }) {
             Animated.sequence([
               Animated.timing(logo, { toValue: 1, duration: 500, useNativeDriver: native }),
               Animated.delay(550),
-              Animated.timing(squeeze, { toValue: 1, duration: 450, easing: Easing.in(Easing.cubic), useNativeDriver: native }),
+              Animated.timing(squeeze, { toValue: 1, duration: 850, easing: Easing.inOut(Easing.cubic), useNativeDriver: native }),
               Animated.timing(fly, { toValue: 1, duration: 650, easing: Easing.inOut(Easing.cubic), useNativeDriver: native }),
             ]).start(() => go())
           }
@@ -154,6 +158,9 @@ export function Unfold({ onDone }: { onDone: () => void }) {
   const { verts, facets, r } = mesh
   const iconLeft = (w - (ICON_W + GAP + tw)) / 2
   const iconTop = h / 2 - ICON_H / 2
+  const slide = tw + GAP + 4 // how far the word slides to be fully behind the key
+  const centre = (w - ICON_W) / 2 - iconLeft // how far the key slides to sit centred once the word is gone
+  const corner = 22 - iconLeft - (ICON_W - 40) / 2
   const t = frame / FRAMES
   // Each point barely loosens, pops open fast when its section's turn comes, then everything is
   // pressed flat over the last few frames.
@@ -213,26 +220,44 @@ export function Unfold({ onDone }: { onDone: () => void }) {
               )
             })}
           </G>
+          {/* Once it's pressed flat, one solid sheet, so no hairline seams between facets show through. */}
+          {frame >= FRAMES && <Rect x={0} y={0} width={w} height={h} fill={FACE} />}
         </Svg>
         {/* The key starts centred beside the word and ends exactly where home shows it, top left. */}
         <Animated.Image source={require('../../assets/inside-icon.png')} resizeMode="contain" style={[s.icon, {
           left: iconLeft, top: iconTop, opacity: logo,
           transform: [
-            { translateX: fly.interpolate({ inputRange: [0, 1], outputRange: [0, 22 - iconLeft - (ICON_W - 40) / 2] }) },
+            // Slides to the centre as the word squeezes in, then on to the corner.
+            { translateX: Animated.add(squeeze.interpolate({ inputRange: [0, 1], outputRange: [0, centre] }), fly.interpolate({ inputRange: [0, 1], outputRange: [0, corner - centre] })) },
             { translateY: Animated.add(logo.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }), fly.interpolate({ inputRange: [0, 1], outputRange: [0, inset.top + 16 + 11 - (iconTop + ICON_H / 2)] })) },
             { scale: fly.interpolate({ inputRange: [0, 1], outputRange: [1, 40 / ICON_W] }) },
           ],
         }]} />
-        <Animated.View onLayout={e => setTw(e.nativeEvent.layout.width)} style={[s.word, {
-          left: iconLeft + ICON_W + GAP, top: iconTop - 6, transformOrigin: 'left',
-          opacity: Animated.multiply(logo, squeeze.interpolate({ inputRange: [0, 0.7, 1], outputRange: [1, 0.6, 0] })),
+        {/* The word slides left behind the key, cut off at the key's right edge. Each letter fades
+            out as it nears the key, so the word dissolves into it instead of being chopped. */}
+        <Animated.View style={[s.word, {
+          left: iconLeft + ICON_W, top: iconTop + ICON_H / 2 - 25, width: w - iconLeft - ICON_W,
+          opacity: logo,
           transform: [
             { translateY: logo.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
-            { translateX: squeeze.interpolate({ inputRange: [0, 1], outputRange: [0, -GAP - 6] }) },
-            { scaleX: squeeze.interpolate({ inputRange: [0, 1], outputRange: [1, 0.05] }) },
+            { translateX: squeeze.interpolate({ inputRange: [0, 1], outputRange: [0, centre] }) },
           ],
         }]}>
-          <T size={30} weight="regular" color={P.line}>keepsake</T>
+          <Animated.View onLayout={e => setTw(e.nativeEvent.layout.width)} style={{ flexDirection: 'row', alignSelf: 'flex-start', marginLeft: GAP, transform: [{ translateX: squeeze.interpolate({ inputRange: [0, 1], outputRange: [0, -slide] }) }] }}>
+            {WORD.map((c, i) => {
+              // How far this letter is from the key's edge: it fades softly over the last FADE px and is fully gone just as
+              // it touches the key, so nothing visible is ever cut off.
+              const x = GAP + (lx[i] ?? (i * tw) / WORD.length)
+              const gone = clamp01(x / slide)
+              const start = clamp01((x - FADE) / slide)
+              return (
+                <Animated.View key={i} onLayout={e => { const at = e.nativeEvent.layout.x; setLx(l => { const n = [...l]; n[i] = at; return n }) }}
+                  style={{ opacity: squeeze.interpolate({ inputRange: [start, start + (gone - start) * 0.5, Math.max(gone, start + 0.002)], outputRange: [1, 0.35, 0], extrapolate: 'clamp' }) }}>
+                  <T size={30} weight="regular" color={P.line}>{c}</T>
+                </Animated.View>
+              )
+            })}
+          </Animated.View>
         </Animated.View>
       </Pressable>
     </Animated.View>
@@ -242,5 +267,5 @@ export function Unfold({ onDone }: { onDone: () => void }) {
 const s = StyleSheet.create({
   page: { flex: 1, backgroundColor: '#ffffff' },
   icon: { position: 'absolute', width: ICON_W, height: ICON_H },
-  word: { position: 'absolute' },
+  word: { position: 'absolute', overflow: 'hidden', height: 50, justifyContent: 'center' },
 })

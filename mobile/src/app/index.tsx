@@ -3,7 +3,7 @@ import { BellRing, Keyboard, Mic, Volume2 } from 'lucide-react-native'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Image, Linking, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg'
+import Svg, { Circle, Defs, RadialGradient, Rect, Stop } from 'react-native-svg'
 import { CenterType } from '../components/CenterType'
 import { SettingsSidebar } from '../components/SettingsSidebar'
 import { T } from '../components/ui'
@@ -164,8 +164,8 @@ export default function Home() {
       return say(PROMPT, () => setMode('idle'))
     }
     mic(true)
-    // With less help it just listens; otherwise Keepsake asks first.
-    if (prefs.assist === 'less') hear()
+    // Keepsake asks first, unless that's turned off in settings.
+    if (!prefs.speakFirst) hear()
     else say(PROMPT, hear)
   }
 
@@ -190,6 +190,17 @@ export default function Home() {
     <View style={s.page}>
       <ScrollView contentContainerStyle={{ flexGrow: 1 }} showsVerticalScrollIndicator={false}>
         <View style={[s.top, { minHeight: top, paddingTop: inset.top + 16, paddingBottom: 20 }]}>
+          {/* A soft gradient on the black: a little lighter and warmer behind the voice, darkest at the edges. */}
+          <Svg width="100%" height="100%" style={StyleSheet.absoluteFill} pointerEvents="none">
+            <Defs>
+              <RadialGradient id={`bg${id}`} cx="50%" cy="55%" rx="75%" ry="60%">
+                <Stop offset="0" stopColor="#2a2119" />
+                <Stop offset="0.55" stopColor="#120f0c" />
+                <Stop offset="1" stopColor="#000000" />
+              </RadialGradient>
+            </Defs>
+            <Rect x="0" y="0" width="100%" height="100%" fill={`url(#bg${id})`} />
+          </Svg>
           <View style={s.head}>
             <Pressable onPress={() => setMenu(true)} accessibilityRole="button" accessibilityLabel="Settings" hitSlop={12}>
               <Image source={require('../../assets/inside-icon.png')} style={s.logo} resizeMode="contain" />
@@ -305,8 +316,8 @@ const s = StyleSheet.create({
   ring: { position: 'absolute', left: (64 - RING) / 2, top: (64 - RING) / 2 },
   micLit: { borderColor: '#ffffff', borderWidth: 1 },
   micHover: { borderColor: '#ffffff', backgroundColor: 'rgba(255,255,255,0.08)' },
-  panel: { backgroundColor: P.sheet, borderTopLeftRadius: P.radius, borderTopRightRadius: P.radius, paddingHorizontal: 24, paddingTop: 32, flexGrow: 1 },
+  panel: { backgroundColor: P.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 32, flexGrow: 1 },
   item: { flexDirection: 'row', alignItems: 'center', gap: 24, paddingVertical: 16, paddingLeft: 24, paddingRight: 20, borderRadius: P.radius, borderWidth: 1, borderColor: '#dcdcdc', backgroundColor: P.sheet },
-  itemOn: { borderColor: INK, backgroundColor: '#f5f5f5' },
+  itemOn: { borderColor: '#ff9f55', backgroundColor: '#fffaf6' }, // the peach of the voice, a shade deeper so it shows on white
   photo: { width: 64, height: 40 },
 })
