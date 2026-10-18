@@ -206,6 +206,7 @@ seen.
 - SQLite stores item names, areas, approximate positions, times, confidence and photo metadata. Even this metadata can reveal routines.
 - You can pause photo saving or clear everything from the Privacy panel.
 - The backend listens on 127.0.0.1 only. Ultralytics telemetry is turned off, and there are no analytics.
+- With iMessage reminders on, each reminder and each "where is my …?" reply **sends the item's last photo** through Photon and iMessage to the authorized phone. Photos are full camera frames, so they can show anything else in view. Nothing is sent until reminders are opted into on both sides.
 - With the Grok voice on, the sentence being spoken (e.g. "I last saw your keys on the desk") is sent to xAI to turn into audio. No images, video or microphone audio are sent. The API key stays in `.env` on the backend and is never sent to the browser.
 - Voice recognition runs in your browser. In Chrome, speech audio is processed by Google. Typed questions stay local.
 

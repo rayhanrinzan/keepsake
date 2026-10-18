@@ -3,7 +3,8 @@ import { imessage } from "@spectrum-ts/imessage";
 import { ConfigError, loadConfig, normalizePhone } from "./config.ts";
 import { replyTo, SeenMessages } from "./inbound.ts";
 import { KeepsakeClient } from "./keepsake.ts";
-import { SpectrumIMessageNotifier } from "./notifier.ts";
+import { attachment } from "spectrum-ts";
+import { type SendableSpace, SpectrumIMessageNotifier } from "./notifier.ts";
 import { ReminderDelivery } from "./reminders.ts";
 
 // Keepsake smart memory reminders over Photon Spectrum (iMessage).
@@ -81,8 +82,9 @@ for await (const [space, message] of app.messages) {
     }
     const reply = await replyTo(message.sender?.id, message.content.text, deps);
     if (reply === null) continue; // e.g. "heading out": the reminder itself is the reply
-    await space.send(reply);
-    console.log(`[photon] replied to ${from}`);
+    const photos = reply.photos.map((p) => attachment(p.data, { mimeType: "image/jpeg", name: p.name }));
+    await (space as unknown as SendableSpace).send(reply.text, ...photos);
+    console.log(`[photon] replied to ${from}${photos.length ? ` with ${photos.length} photo(s)` : ""}`);
   } catch (err) {
     console.error("[photon] failed to handle message:", err instanceof Error ? err.message : err);
   }

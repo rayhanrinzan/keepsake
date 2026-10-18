@@ -2,7 +2,8 @@
 
 Keepsake can text you a gentle reminder about belongings it recently saw you with:
 
-> Keepsake reminder: Your wallet was last seen at 2:34 PM. Check whether you have it. The last photo is in Keepsake.
+> Keepsake reminder: Your wallet was last seen at 2:34 PM. Check whether you have it.
+> *(followed by the photo of where Keepsake last saw it)*
 
 Reminders go out through [Photon Spectrum](https://photon.codes/docs/spectrum-ts) iMessage. They're
 built only from what Keepsake actually recorded: a real photo and the time of the last sighting.
@@ -21,7 +22,12 @@ vision events (events.py) ──► reminders.py policy ─► GET /api/reminder
 The backend decides *whether* to remind. It makes no network calls and runs on its own thread, so
 Keepsake works normally when the agent or Photon is offline. The agent only checks its recipient
 allowlist, formats and sends the text, and reports `accepted` or `failed`. **`accepted` means
-Spectrum took the send request, not that the phone received it.** Photos never leave the Mac.
+Spectrum took the send request, not that the phone received it.**
+
+**Photos are sent.** Each reminder carries the real last-seen photo of each item (up to 3), and a
+"where is my …?" reply carries that item's photo. Those photos leave the Mac: they go through Photon
+and iMessage to the authorized recipients. They're full camera frames, so they can show whatever else
+was in view. If a photo can't be fetched, the text still goes out.
 
 ## Modes
 

@@ -4,9 +4,11 @@
 import type { Config } from "./config.ts";
 import { composeReminder } from "./format.ts";
 import { type KeepsakeClient, KeepsakeRefused, KeepsakeUnavailable, type ReminderAlert } from "./keepsake.ts";
-import type { Notifier } from "./notifier.ts";
+import type { Notifier, Photo } from "./notifier.ts";
 
 type Log = (msg: string) => void;
+
+const MAX_PHOTOS = 3;
 
 export interface Delivery {
   alert: ReminderAlert;
@@ -79,12 +81,13 @@ export class ReminderDelivery {
       throw err;
     }
     const text = composeReminder(alert, this.timeZone);
+    const photos = await this.photos(alert);
     let accepted = 0;
     let failed = 0;
     let lastError = "";
     for (const to of this.config.recipients) {
       try {
-        await this.notifier.send(to, text);
+        await this.notifier.send(to, text, photos);
         accepted++;
       } catch (err) {
         failed++;
@@ -100,10 +103,24 @@ export class ReminderDelivery {
     this.log(
       `[reminders] #${alert.id} (${alert.trigger}, ${alert.mode}) about ${names}: ` +
         (accepted
-          ? `accepted by ${this.notifier.name} for ${accepted}/${this.config.recipients.length} recipient(s)`
+          ? `accepted by ${this.notifier.name} for ${accepted}/${this.config.recipients.length} recipient(s), ${photos.length} photo(s)`
           : `send failed (attempt ${alert.attempts}): ${lastError}`),
     );
     return { alert, accepted, failed };
+  }
+
+  /** The real last-seen photo of each item (max 3). A photo that can't be fetched is skipped. */
+  private async photos(alert: ReminderAlert): Promise<Photo[]> {
+    const out: Photo[] = [];
+    for (const item of alert.items.slice(0, MAX_PHOTOS)) {
+      if (item.snapshot_id == null) continue;
+      try {
+        out.push({ name: `${item.object_id}.jpg`, data: await this.keepsake.photo(item.snapshot_id) });
+      } catch (err) {
+        this.log(`[reminders] photo for ${item.name} unavailable: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    return out;
   }
 
   private setOnline(online: boolean, why?: string) {

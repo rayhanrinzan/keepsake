@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type Config, ConfigError, loadConfig } from "../src/config.ts";
 import { composeReminder } from "../src/format.ts";
-import { replyTo, SeenMessages } from "../src/inbound.ts";
+import { replyTo as reply, SeenMessages } from "../src/inbound.ts";
 import { KeepsakeClient, KeepsakeRefused, KeepsakeUnavailable, type ReminderAlert } from "../src/keepsake.ts";
 import { type Notifier, SpectrumIMessageNotifier } from "../src/notifier.ts";
 import { ReminderDelivery } from "../src/reminders.ts";
@@ -38,6 +38,7 @@ function fakeFetch(routes: Record<string, Route>) {
     let route = routes[key];
     if (route === undefined) return new Response(JSON.stringify({ detail: "not found" }), { status: 404 });
     if (route === "offline") throw new TypeError("fetch failed");
+    if (Buffer.isBuffer(route)) return new Response(route, { headers: { "Content-Type": "image/jpeg" } });
     if (typeof route === "function") route = (route as (i?: RequestInit) => unknown)(init);
     if (route && typeof route === "object" && "httpStatus" in route) {
       const r = route as { httpStatus: number; detail?: string };
@@ -51,14 +52,19 @@ function fakeFetch(routes: Record<string, Route>) {
 class FakeNotifier implements Notifier {
   name = "fake";
   sent: [string, string][] = [];
+  photos: number[] = [];
   constructor(private fail = false) {}
-  async send(to: string, text: string) {
+  async send(to: string, text: string, photos: { data: Buffer }[] = []) {
     if (this.fail) throw new Error("photon 503");
     this.sent.push([to, text]);
+    this.photos.push(photos.length);
   }
 }
 
 const quiet = () => {};
+// Most inbound tests only care about the text of the reply.
+const replyTo = async (...a: Parameters<typeof reply>) => (await reply(...a))?.text ?? null;
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 const client = (routes: Record<string, Route>) => {
   const ff = fakeFetch(routes);
   return { k: new KeepsakeClient("http://127.0.0.1:8000", ff.impl), calls: ff.calls };
@@ -82,7 +88,7 @@ test("config: sending is off by default; recipients must be explicit E.164 numbe
 
 test("format: wearable reminder is grounded in time and photo, never a made-up place", () => {
   const text = composeReminder(alert(), "UTC");
-  assert.equal(text, "Keepsake reminder: Your wallet was last seen at 6:34 PM. Check whether you have it. The last photo is in Keepsake.");
+  assert.equal(text, "Keepsake reminder: Your wallet was last seen at 6:34 PM. Check whether you have it.");
   assert.doesNotMatch(text, /couch|table|room|forgot|left behind|definitely/i);
 });
 
@@ -97,7 +103,7 @@ test("format: several items in one short message", () => {
   a.items.push({ ...a.items[0]!, object_id: "keys_01", name: "Keys", last_seen: "2026-10-17T18:31:00Z" });
   assert.equal(
     composeReminder(a, "UTC"),
-    "Keepsake reminder: Keepsake last saw your wallet (6:34 PM) and keys (6:31 PM). Check whether you have them. Last photos are in Keepsake.",
+    "Keepsake reminder: Keepsake last saw your wallet (6:34 PM) and keys (6:31 PM). Check whether you have them.",
   );
 });
 
@@ -119,8 +125,8 @@ test("delivery: claims, sends to each authorized recipient and reports accepted"
   assert.deepEqual(n.sent.map(([to]) => to), [ME, "+15555550101"]);
   assert.match(n.sent[0]![1], /wallet was last seen at 6:34 PM/);
   assert.deepEqual(calls.map((c) => c.key), ["GET /api/reminders/alerts", "POST /api/reminders/alerts/1/claim",
-    "POST /api/reminders/alerts/1/result"]);
-  assert.deepEqual(calls[2]!.body, { status: "accepted" });
+    "GET /api/snapshots/12/image", "POST /api/reminders/alerts/1/result"]);
+  assert.deepEqual(calls[3]!.body, { status: "accepted" });
   assert.equal(calls[1]!.headers.get("X-Keepsake-Local"), "1");
 });
 
@@ -236,4 +242,46 @@ test("inbound: the same message id is processed once", () => {
   seen.firstTime("b");
   seen.firstTime("c");
   assert.equal(seen.firstTime("a"), true);
+});
+
+
+// ---------- photos ----------
+
+test("delivery: each reminder carries the item's real last photo", async () => {
+  const { k, calls } = client(queuedRoutes({ "GET /api/snapshots/12/image": JPEG }));
+  const n = new FakeNotifier();
+  const [out] = await new ReminderDelivery(k, n, config(), quiet, "UTC").poll();
+  assert.equal(out?.accepted, 1);
+  assert.deepEqual(n.photos, [1]);
+  assert.ok(calls.some((c) => c.key === "GET /api/snapshots/12/image"));
+  assert.doesNotMatch(n.sent[0]![1], /photo is in Keepsake/);
+});
+
+test("delivery: a missing photo never blocks the reminder text", async () => {
+  const { k } = client(queuedRoutes()); // photo route 404s
+  const n = new FakeNotifier();
+  const [out] = await new ReminderDelivery(k, n, config(), quiet).poll();
+  assert.equal(out?.accepted, 1);
+  assert.deepEqual(n.photos, [0]);
+});
+
+test("inbound: where-is answers attach the photo and drop the 'photo is in Keepsake' line", async () => {
+  const { deps } = inbound({
+    "POST /api/query": { found: true, answer: "I last saw your keys at 3:42 PM. The last photo is in Keepsake. It may have moved since.",
+      object: { name: "Keys", snapshot: { id: 7 } } },
+    "GET /api/snapshots/7/image": JPEG,
+  });
+  const r = await reply(ME, "where are my keys?", deps);
+  assert.equal(r?.text, "I last saw your keys at 3:42 PM. It may have moved since.");
+  assert.equal(r?.photos.length, 1);
+  assert.deepEqual(r?.photos[0]?.data, JPEG);
+});
+
+test("notifier: sends the text and the photos in one Spectrum call", async () => {
+  const sent: unknown[][] = [];
+  const n = new SpectrumIMessageNotifier(async () => ({ send: async (...c: unknown[]) => void sent.push(c) }),
+    (data, name) => ({ attachment: name, bytes: data.length }));
+  await n.send(ME, "hi", [{ name: "a.jpg", data: JPEG }]);
+  await n.send(ME, "no photo");
+  assert.deepEqual(sent, [["hi", { attachment: "a.jpg", bytes: 4 }], ["no photo"]]);
 });

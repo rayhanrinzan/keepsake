@@ -11,6 +11,7 @@ export interface CatalogItem {
 export interface QueryAnswer {
   found: boolean;
   answer: string;
+  object?: { name: string; snapshot: { id: number } | null } | null;
 }
 
 export type Mode = "off" | "high_assistance" | "everyday";
@@ -127,6 +128,20 @@ export class KeepsakeClient {
 
   setReminders(changes: { mode?: Mode; enabled?: boolean; opt_in?: boolean }) {
     return this.write<ReminderStatus>("PUT", "/api/reminders/settings", changes);
+  }
+
+  /** One stored photo (JPEG bytes), by snapshot id. */
+  async photo(snapshotId: number): Promise<Buffer> {
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.baseUrl}/api/snapshots/${snapshotId}/image`, {
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (err) {
+      throw new KeepsakeUnavailable(`Keepsake photo ${snapshotId} unreachable (${err instanceof Error ? err.name : "error"})`);
+    }
+    if (!res.ok) throw new KeepsakeRefused(res.status, `Keepsake photo ${snapshotId}: HTTP ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
   }
 
   queuedAlerts() {
