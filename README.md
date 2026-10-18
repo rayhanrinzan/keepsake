@@ -35,6 +35,8 @@ python3.12 -m venv .venv            # or: uv venv --python 3.12 .venv
 npm --prefix frontend install
 ```
 
+On a fresh Mac, `bash scripts/setup_mac.sh` does all of this plus the optional extras below; moving the demo to another laptop is in [docs/demo_on_another_mac.md](docs/demo_on_another_mac.md).
+
 Model weights download on first use: `yolov8s-worldv2.pt` (about 25 MB) plus OpenAI CLIP (about 340 MB, cached by the `clip` package). `backend/models/items.pt` comes with the repo. CLIP is installed by `requirements.txt`; without it, the camera panel shows "YOLO-World needs CLIP".
 
 Optional extras:
