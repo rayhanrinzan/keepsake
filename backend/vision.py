@@ -6,6 +6,8 @@ from SpatialMemory are handed to SnapshotStore, which writes selected photos on 
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 import threading
 import time
 from collections import deque
@@ -13,16 +15,27 @@ from collections import deque
 import cv2
 import numpy as np
 
-from furniture import FURNITURE, propose_regions
-from catalog import MIN_CONF
-from memory import ALIASES, Observation, SpatialMemory, display_name
-from modes import MONITORING, ModeController
+from cameras import find_camera, list_cameras
+from catalog import MIN_CONF, SUPPORTED
+from memory import ALIASES, ItemMemory, Observation, display_name, now_iso, object_id_for
+from presence import PresenceTracker
 from snapshots import SnapshotStore
-from spatial import Region
+from wearable import Hand, InteractionDetector, WearableObserver
+import events as E
+
+PHOTO_EVENTS = {E.OBJECT_OBSERVED, E.PLACEMENT_CONFIRMED}  # observation events that keep a photo
+
+# Classes in items.pt with no real training photos yet: leave these to YOLO-World.
+NOT_TRAINED: set = set()  # all 4 custom classes trained (glasses mAP50 0.99)
 
 log = logging.getLogger("keepsake.vision")
 
-PERSON = "person"  # detected only to judge whether someone is covering an object
+PERSON = "person"  # detected to judge occlusion and whether someone is in the room
+# YOLO-World also looks for hands: from a chest mount they're usually partial, at the bottom edge,
+# where MediaPipe (which needs most of a hand) rarely fires. Both sources are merged.
+HAND = "hand"
+HAND_CONF = float(os.getenv("CTRLF_HAND_CONF", "0.2"))
+PHOTO_REFRESH = float(os.getenv("CTRLF_PHOTO_REFRESH", "8"))  # seconds between thumbnails per item
 
 
 def pick_device() -> str:
@@ -69,39 +82,74 @@ class MotionDetector:
         roi = self.mask[r0:r1, c0:c1]
         return float(roi.mean()) if roi.size else 0.0
 
+    def background(self, exclude: list[tuple[float, float, float, float]], pad: float = 0.1) -> float:
+        """Changed-pixel fraction outside the given boxes (hands, objects): camera motion, not
+        the motion of a hand moving an object."""
+        if self.mask is None:
+            return 0.0
+        h, w = self.mask.shape
+        keep = np.ones_like(self.mask, dtype=bool)
+        for x0, y0, x1, y1 in exclude:
+            px, py = (x1 - x0) * pad, (y1 - y0) * pad
+            keep[int(max(0, y0 - py) * h):int(min(1, y1 + py) * h) + 1,
+                 int(max(0, x0 - px) * w):int(min(1, x1 + px) * w) + 1] = False
+        return float(self.mask[keep].mean()) if keep.any() else 0.0
+
+
+def merge_hands(primary: list[Hand], extra: list[Hand], same: float = 0.3) -> list[Hand]:
+    """MediaPipe hands plus YOLO-World hand boxes that don't overlap one of them."""
+    def iou(a, b):
+        ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+        iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+        inter = ix * iy
+        union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+        return inter / union if union > 0 else 0.0
+    return list(primary) + [h for h in extra if all(iou(h.bbox, p.bbox) < same for p in primary)]
+
 
 class VisionWorker(threading.Thread):
-    def __init__(self, memory: SpatialMemory, regions: list[Region], snapshots: SnapshotStore,
-                 modes: ModeController, camera_index: int | str = 0, model_path: str = "yolo11n.pt",
-                 conf: float = 0.4, fps: float = 5.0, frame_width: int = 1280,
-                 camera_shift_motion: float = 0.5, scan_model_path: str | None = None,
-                 device: str | None = None, preview_width: int = 640):
+    def __init__(self, memory: ItemMemory, snapshots: SnapshotStore, camera_index: int | str = 0,
+                 model_path: str = "yolov8s-worldv2.pt", conf: float = 0.15, fps: float = 5.0,
+                 frame_width: int = 1280, device: str | None = None, preview_width: int = 640,
+                 presence: PresenceTracker | None = None, camera_name: str | None = None,
+                 hands_enabled: bool = True, frozen_seconds: float = 5.0, verify_enabled: bool = True):
         super().__init__(daemon=True, name="vision")
         self.memory = memory
-        self.regions = regions  # shared list; updated in place by calibration
         self.snapshots = snapshots
-        self.modes = modes
         self.camera_index = camera_index
+        self.camera_name = camera_name  # e.g. "iPhone": wins over camera_index (see cameras.py)
         self.model_path = model_path
-        self.scan_model_path = scan_model_path  # larger model used only by Scan room
-        self._scan_model = None
+        self._label: dict[str, str] = {}  # YOLO-World prompt -> catalog category
         self.conf = conf
         self.interval = 1.0 / max(fps, 0.5)
         self.frame_width = frame_width  # detection resolution; small items across a room need ~1280
         self.preview_width = preview_width
         self.device = device or pick_device()
-        self.camera_shift_motion = camera_shift_motion
         self.motion = MotionDetector()
+        self.presence = presence or PresenceTracker()
+        self.observer = WearableObserver("wearable")             # issue #4: object_observed
+        self.interactions = InteractionDetector("wearable")      # issue #5: hand evidence
+        self.hands_enabled = hands_enabled
+        self.hands = None  # hands.HandDetector, created on the worker thread
+        self.verify_enabled = verify_enabled
+        self.verifier = None  # verify.ClipVerifier: second opinion on every item box
         self._ring: deque[tuple[int, np.ndarray]] = deque(maxlen=12)  # (frame_id, snapshot-size frame)
         self._frame_id = 0
-        self._shift_frames = 0
+        self._photo_at: dict[str, float] = {}  # category -> monotonic time of its last thumbnail
+        self._still_frames = 0  # consecutive pixel-identical frames: a frozen feed
+        self._last_sample: np.ndarray | None = None
+        self._frozen_frames = max(1, int(frozen_seconds * fps))
         self._halt = threading.Event()
         self._jpeg: bytes | None = None
         self._jpeg_id = 0
         self._jpeg_lock = threading.Lock()
         self.status = {"camera": "starting", "error": None, "warning": None, "fps": 0.0,
                        "device": self.device, "inference_width": frame_width,
-                       "motion": 0.0, "detections": [], "model": model_path}
+                       "motion": 0.0, "detections": [], "model": model_path,
+                       "camera_mode": "wearable", "camera_motion": 0.0,
+                       "hands": "off", "hands_reason": None, "interactions": {},
+                       "verify": "off", "verify_dropped": 0,
+                       **self.presence.status()}
 
     # ---- public ----
     def latest_jpeg(self) -> bytes | None:
@@ -122,22 +170,50 @@ class VisionWorker(threading.Thread):
             from ultralytics import YOLO, settings
             settings.update({"sync": False})  # no Ultralytics telemetry
             model = YOLO(self.model_path)
+            # Optional model trained on our own items (last-seen/train.py -> models/items.pt).
+            # It handles the items it knows; YOLO-World keeps looking for everything else.
+            self._items_model = None
+            items_path = Path(os.getenv("CTRLF_ITEMS_MODEL", str(Path(__file__).parent / "models" / "items.pt")))
+            if items_path.exists():
+                self._items_model = YOLO(str(items_path))
+                log.info("custom items model %s: %s", items_path.name, list(self._items_model.names.values()))
+            custom = (set(self._items_model.names.values()) - NOT_TRAINED) if self._items_model else set()
+            if self.verify_enabled:
+                from verify import ClipVerifier
+                self.verifier = ClipVerifier(self.device)
+                self.status.update(verify="on" if self.verifier.available else "unavailable")
+            # With the CLIP check catching look-alikes, YOLO-World also proposes the trained items as a
+            # backup (it found a real wallet the trained model missed); without it, it skips them.
+            verified = self.verifier is not None and self.verifier.available
             if "world" in str(self.model_path).lower():  # open vocabulary: tell it what to look for
-                from catalog import SUPPORTED
+                from catalog import CATALOG
                 try:
-                    model.set_classes(SUPPORTED + [PERSON])
+                    from verify import CHECKED
+                    model.set_classes([c for c in SUPPORTED if (verified and c in CHECKED) or c not in custom]
+                                      + [PERSON, HAND])
                 except ImportError as e:  # YOLO-World encodes the prompts with CLIP
                     raise RuntimeError(
                         "YOLO-World needs CLIP: run .venv/bin/pip install -r backend/requirements.txt") from e
+                self._label = {c.get("prompt", c["category"]): c["category"] for c in CATALOG}
         except Exception as e:  # noqa: BLE001
             log.exception("model load failed")
             self.status.update(camera="error", error=f"Model load failed: {e}")
             return
-        class_ids = [i for i, n in model.names.items() if n in ALIASES or n == PERSON]
-        missing = [c for c in ALIASES if c not in model.names.values()]
+        class_ids = [i for i, n in model.names.items()
+                     if self._label.get(n, n) in ALIASES or n in (PERSON, HAND)]
+        self._yolo_hands = HAND in model.names.values()
+        seen_names = {self._label.get(n, n) for n in model.names.values()}
+        missing = [c for c in ALIASES if c not in seen_names and c not in custom]
         if missing:  # e.g. a COCO-only model can't see keys or wallets
             log.warning("detector %s can't detect: %s", self.model_path, ", ".join(missing))
         self.status["undetectable"] = missing
+        if self.hands_enabled:
+            from hands import HandDetector
+            self.hands = HandDetector()
+            self.status.update(hands="on" if self.hands.available else "unavailable",
+                               hands_reason=self.hands.reason or None)
+        else:
+            self.status["hands_reason"] = "disabled (CTRLF_HANDS=0)"
 
         cap = None
         failures = 0
@@ -182,36 +258,44 @@ class VisionWorker(threading.Thread):
         frame = self._resize(full, self.frame_width)
         self._ring.append((self._frame_id, full))
 
+        global_motion = self.motion.update(frame)
+        self.status["motion"] = round(global_motion, 3)
+        # A paused feed (Continuity Camera while the iPhone is unlocked or in use) repeats the same
+        # frame pixel for pixel; a live sensor never does, even when the scene is perfectly still.
+        sample = frame[::16, ::16]
+        same = self._last_sample is not None and np.array_equal(sample, self._last_sample)
+        self._last_sample = sample.copy()
+        self._still_frames = self._still_frames + 1 if same else 0
         warning = None
         if float(frame[::8, ::8].mean()) < 8:  # e.g. Continuity Camera paused or lens covered
             warning = "The camera is sending black frames. Check the lens isn't covered."
-        global_motion = self.motion.update(frame)
-        self.status["motion"] = round(global_motion, 3)
-
-        if self.modes.reset_tracker:  # new viewpoint: drop ByteTrack identities
-            self.modes.reset_tracker = False
-            self._reset_tracker(model)
-        self.modes.on_frame(global_motion, lambda: self._scan(model, full))
-
-        # Whole-view change outside Reposition mode: hold location updates instead of logging moves.
-        monitoring = self.modes.mode == MONITORING
-        self._shift_frames = self._shift_frames + 1 if global_motion > self.camera_shift_motion else 0
-        if monitoring and self._shift_frames >= 3:
-            self.memory.suspend(3.0)
-            self.status["camera_shift_at"] = time.time()
-        if monitoring and time.time() - self.status.get("camera_shift_at", 0) < 10:
-            warning = warning or ("The camera view changed a lot. If you moved the camera, "
-                                  "press Scan room to update its areas.")
+        elif self._still_frames >= self._frozen_frames:
+            warning = ("The camera picture is frozen. If it's an iPhone, lock it and keep it still "
+                       "so Continuity Camera resumes.")
         self.status["warning"] = warning
 
+        hands = []
         try:
-            obs = self._detect(model, frame, class_ids)
+            obs = self._detect(model, frame, class_ids) + self._detect_items(frame)
+            from verify import big_enough
+            obs = big_enough(obs, MIN_CONF)
+            if self.verifier is not None:
+                before = len(obs)
+                obs = self.verifier.keep(frame, obs)
+                self.status["verify_dropped"] = before - len(obs)
             for o in obs:
                 o.motion = self.motion.local(o.bbox)
-            events = self.memory.observe(obs, frame_id=self._frame_id)
-            for ev in events:
-                self.snapshots.submit(ev, self._frame_for(ev.get("frame_id")))
-                log.info("%s %s -> %s", ev["event_type"], ev["name"], ev["region"])
+            if self.presence.update(obs) == "left":
+                log.info("person left the view")
+            self.status.update(self.presence.status())
+            for ev in self.memory.observe(obs, frame_id=self._frame_id):
+                log.info("%s %s", ev["event_type"], ev["name"])
+            self._refresh_photos(full)
+            mp_hands = self.hands.detect(frame) if self.hands else []
+            hands = merge_hands(mp_hands, [Hand(o.bbox, o.confidence) for o in obs
+                                           if o.category == HAND and o.confidence >= HAND_CONF])
+            self.status["hands_in_view"] = {"mediapipe": len(mp_hands), "total": len(hands)}
+            self._observe_wearable([o for o in obs if o.category != HAND], hands)
         except Exception as e:  # noqa: BLE001
             log.exception("inference failed")
             if self.device != "cpu":  # e.g. an MPS op that isn't supported: fall back for good
@@ -221,31 +305,47 @@ class VisionWorker(threading.Thread):
             self.status["error"] = f"Detection error: {e}"
             obs = []
         shown = [o for o in obs if o.category in MIN_CONF and o.confidence >= MIN_CONF[o.category]]
-        self._publish(self._resize(frame, self.preview_width), shown)  # only what memory would accept
+        people = [o for o in obs if o.category == PERSON and o.confidence >= self.presence.min_conf]
+        self._publish(self._resize(frame, self.preview_width), shown, people, hands)  # only what's counted
 
-    def _scan(self, model, reference: np.ndarray) -> tuple[bytes | None, list[dict]]:
-        """Scan room: detect furniture over the last few (steady) frames and propose areas."""
-        if self._scan_model is None and self.scan_model_path:
-            try:
-                from ultralytics import YOLO
-                self._scan_model = YOLO(self.scan_model_path)
-            except Exception:  # noqa: BLE001
-                log.exception("scan model unavailable; using the tracking model")
-                self.scan_model_path = None
-        model = self._scan_model or model
-        ids = [i for i, n in model.names.items() if n in FURNITURE]
-        per_frame = []
-        for _, f in list(self._ring)[-5:]:
-            small = self._resize(f, self.frame_width)
-            h, w = small.shape[:2]
-            res = model.predict(small, conf=0.25, classes=ids, imgsz=self.frame_width,
-                                device=self.device, verbose=False)[0]
-            per_frame.append([(model.names[int(c)], float(cf), (b[0] / w, b[1] / h, b[2] / w, b[3] / h))
-                              for b, c, cf in zip(res.boxes.xyxy.tolist(), res.boxes.cls.tolist(),
-                                                  res.boxes.conf.tolist())])
-        proposal = propose_regions(per_frame)
-        log.info("scan found %s", [p["name"] for p in proposal])
-        return self._encode(reference, 85), proposal
+    def _refresh_photos(self, full: np.ndarray) -> None:
+        """Keep each item's thumbnail as fresh as its "last seen" time: whenever memory records a
+        sighting, save a photo of it, at most every PHOTO_REFRESH seconds per item. (The observer's
+        events need a nearly still camera, which a worn one rarely is, so photos lagged behind.)"""
+        now = time.monotonic()
+        for category, o in self.memory.sightings.items():
+            if now - self._photo_at.get(category, float("-inf")) < PHOTO_REFRESH:
+                continue
+            self._photo_at[category] = now
+            self.snapshots.submit({"object_id": object_id_for(category), "event_type": "seen",
+                                   "timestamp": now_iso(), "bbox": o.bbox, "region": None,
+                                   "confidence": round(o.confidence, 3), "view_id": self.memory.view_id},
+                                  full)
+
+    def _observe_wearable(self, obs: list[Observation], hands) -> None:
+        """Issue #4/#5 events: filtered sightings plus hand-object evidence, stored for Photon/voice."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        cam = self.motion.background([o.bbox for o in obs if o.bbox] + [h.bbox for h in hands])
+        self.status["camera_motion"] = round(cam, 3)
+        view = self.memory.view_id
+        out = self.observer.update(obs, now, self._frame_id, cam, view)
+        if (self.hands is not None and self.hands.available) or getattr(self, "_yolo_hands", False):
+            out += self.interactions.update(obs, hands, now, self._frame_id, cam, view)
+            self.status["interactions"] = {c: s for c, s in self.interactions.states().items() if s != "IDLE"}
+        for ev in out:
+            self._record(ev)
+
+    def _record(self, ev: dict) -> None:
+        db = self.memory.db
+        db.add_observation(ev)
+        log.info("%s %s (%.2f) %s", ev["event_type"], ev["name"], ev["confidence"], ",".join(ev["evidence"]))
+        if ev["event_type"] in PHOTO_EVENTS:
+            photo = {"object_id": ev["object_id"], "event_type": ev["event_type"],
+                     "timestamp": ev["timestamp"], "bbox": ev["bbox"], "region": None,
+                     "confidence": ev["confidence"], "view_id": ev["view_id"]}
+            self.snapshots.submit(photo, self._frame_for(ev["frame_id"]),
+                                  on_saved=lambda sid, eid=ev["event_id"]: db.set_observation_snapshot(eid, sid))
 
     def _frame_for(self, frame_id: int | None) -> np.ndarray | None:
         for fid, f in reversed(self._ring):
@@ -253,23 +353,25 @@ class VisionWorker(threading.Thread):
                 return f
         return None
 
-    @staticmethod
-    def _reset_tracker(model) -> None:
-        try:
-            for t in model.predictor.trackers:
-                t.reset()
-        except Exception:  # noqa: BLE001
-            model.predictor = None  # forces a fresh predictor + tracker on the next call
-
     def _open_camera(self):
-        cap = cv2.VideoCapture(self.camera_index)
+        index = self.camera_index
+        if self.camera_name:  # indexes shift as cameras come and go; never fall back to another one
+            found = find_camera(self.camera_name)
+            if found is None:
+                names = ", ".join(n for _, n in list_cameras()) or "none"
+                self.status.update(camera="error", error=(
+                    f"Camera \"{self.camera_name}\" isn't connected (cameras now: {names}). "
+                    "For an iPhone: lock it, keep it still near the Mac, and wait."))
+                return None
+            index = found
+        cap = cv2.VideoCapture(index)
         if not cap.isOpened():
             cap.release()
             self.status.update(camera="error", error=(
-                f"Can't open camera {self.camera_index}. Check the camera index and permission."))
+                f"Can't open camera {index}. Check the camera index and permission."))
             return None
         self.status.update(camera="active", error=None)
-        log.info("camera %s opened", self.camera_index)
+        log.info("camera %s opened%s", index, f" ({self.camera_name})" if self.camera_name else "")
         return cap
 
     @staticmethod
@@ -285,7 +387,7 @@ class VisionWorker(threading.Thread):
         return buf.tobytes() if ok else None
 
     def _detect(self, model, frame: np.ndarray, class_ids: list[int]) -> list[Observation]:
-        res = model.track(frame, persist=True, tracker="bytetrack.yaml", conf=self.conf,
+        res = model.track(frame, persist=True, tracker=str(Path(__file__).parent / "tracker_lowconf.yaml") if "world" in str(self.model_path).lower() else "bytetrack.yaml", conf=self.conf,
                           imgsz=self.frame_width, device=self.device,
                           classes=class_ids, verbose=False)[0]
         h, w = frame.shape[:2]
@@ -296,30 +398,43 @@ class VisionWorker(threading.Thread):
         for xyxy, cls, cf, tid in zip(res.boxes.xyxy.tolist(), res.boxes.cls.int().tolist(),
                                       res.boxes.conf.tolist(), ids):
             x0, y0, x1, y1 = xyxy[0] / w, xyxy[1] / h, xyxy[2] / w, xyxy[3] / h
-            obs.append(Observation(category=model.names[cls], confidence=float(cf),
+            obs.append(Observation(category=self._label.get(model.names[cls], model.names[cls]), confidence=float(cf),
                                    x=(x0 + x1) / 2, y=(y0 + y1) / 2, track_id=tid,
                                    bbox=(x0, y0, x1, y1)))
         return obs
 
-    def _publish(self, frame: np.ndarray, obs: list[Observation]) -> None:
+    def _detect_items(self, frame: np.ndarray) -> list[Observation]:
+        """Detections from our own trained model (keys, wallet, AirPods, glasses)."""
+        m = getattr(self, "_items_model", None)
+        if m is None:
+            return []
+        res = m.predict(frame, conf=0.25, imgsz=640, device=self.device, verbose=False,
+                        agnostic_nms=True)[0]  # one label per physical box
+        h, w = frame.shape[:2]
+        best: dict[str, Observation] = {}  # one physical object per item: keep the strongest box
+        for xyxy, cls, cf in zip(res.boxes.xyxy.tolist(), res.boxes.cls.int().tolist(), res.boxes.conf.tolist()):
+            name = m.names[cls]
+            if name not in ALIASES or name in NOT_TRAINED or (name in best and best[name].confidence >= cf):
+                continue
+            x0, y0, x1, y1 = xyxy[0] / w, xyxy[1] / h, xyxy[2] / w, xyxy[3] / h
+            best[name] = Observation(category=name, confidence=float(cf), x=(x0 + x1) / 2,
+                                     y=(y0 + y1) / 2, track_id=None, bbox=(x0, y0, x1, y1))
+        return list(best.values())
+
+    def _publish(self, frame: np.ndarray, obs: list[Observation],
+                 people: list[Observation] = (), hands=()) -> None:
         h, w = frame.shape[:2]
         out = frame.copy()
-        for r in list(self.regions):  # region overlays
-            p0, p1 = (int(r.x0 * w), int(r.y0 * h)), (int(r.x1 * w) - 1, int(r.y1 * h) - 1)
-            cv2.rectangle(out, p0, p1, (235, 235, 235), 1)
-            cv2.putText(out, r.name, (p0[0] + 6, p0[1] + 18), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5, (245, 245, 245), 1, cv2.LINE_AA)
-        for o in obs:
-            x0, y0, x1, y1 = o.bbox
+        for o, color in [(p, (230, 160, 60)) for p in people] + [(o, (90, 200, 120)) for o in obs]:
+            x0, y0, x1, y1 = o.bbox  # people in blue, tracked items in green
             p0, p1 = (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h))
-            cv2.rectangle(out, p0, p1, (90, 200, 120), 2)
+            cv2.rectangle(out, p0, p1, color, 2)
             label = f"{display_name(o.category)} {o.confidence:.0%}"
             cv2.putText(out, label, (p0[0], max(14, p0[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5, (90, 200, 120), 1, cv2.LINE_AA)
-        if self.modes.mode != MONITORING:
-            cv2.rectangle(out, (0, 0), (w, 28), (40, 40, 40), -1)
-            cv2.putText(out, "Monitoring paused", (10, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                        (230, 230, 230), 1, cv2.LINE_AA)
+                        0.5, color, 1, cv2.LINE_AA)
+        for hd in hands:  # MediaPipe hands, for checking interaction evidence live
+            x0, y0, x1, y1 = hd.bbox
+            cv2.rectangle(out, (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h)), (230, 160, 60), 1)
         jpg = self._encode(out)
         if jpg:
             with self._jpeg_lock:

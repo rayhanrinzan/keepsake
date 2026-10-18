@@ -1,38 +1,44 @@
-import { useCallback, useEffect, useState } from 'react'
-import { ChevronDown, ScanLine } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Settings } from 'lucide-react'
 import { api } from './lib/api'
-import type { Health, MoveEvent, QueryResult, Region, TrackedObject } from './lib/api'
+import { setVoiceConfig, speechOutputSupported, startWakeListener, stopWakeListener, unlockSpeech } from './lib/voice'
+import type { WakeState } from './lib/voice'
+import type { ActivityEvent, Health, QueryResult, TrackedObject } from './lib/api'
 import { ObjectList } from './components/ObjectList'
 import { ObjectDetail } from './components/ObjectDetail'
-import { PinLegend, RoomBlueprint } from './components/RoomBlueprint'
-import { PaperSheet } from './components/PaperSheet'
-import { ItemPanel } from './components/ItemPanel'
 import { Sidebar } from './components/Sidebar'
 import type { View } from './components/Sidebar'
 import { SearchPanel } from './components/SearchPanel'
 import { CameraPanel } from './components/CameraPanel'
 import { ActivityFeed } from './components/ActivityFeed'
 import { PrivacyPanel } from './components/PrivacyPanel'
-import { ScanFlow } from './components/ScanFlow'
-import { useCameraTrace } from './lib/trace'
+import { SettingsDialog } from './components/SettingsDialog'
 
 const POLL_MS = 1500
+const LOST_ASK_MS = 10_000 // an item out of view this long gets "Are you looking for something?"
 
 function readView(): View {
   try {
     const v = localStorage.getItem('keepsake.view')
-    return v === 'list' || v === 'settings' ? v : 'map'
+    return v === 'settings' ? v : 'list'
   } catch {
-    return 'map'
+    return 'list'
+  }
+}
+
+function readWakeOn(): boolean {
+  try {
+    return localStorage.getItem('keepsake.handsfree') !== 'off'
+  } catch {
+    return true
   }
 }
 
 function CameraStatus({ health, offline }: { health: Health | null; offline: boolean }) {
-  const paused = health && health.mode !== 'MONITORING'
   const [label, dot] = offline
     ? ['Offline', 'bg-danger']
     : !health ? ['Connecting…', 'bg-faint']
-      : paused ? ['Paused for scan', 'bg-caution']
+      : health.camera === 'active' && health.warning ? ['Camera paused', 'bg-caution']
         : health.camera === 'active' ? ['Watching', 'bg-live']
           : health.camera === 'disabled' ? ['Camera off', 'bg-faint']
             : ['Camera unavailable', 'bg-caution']
@@ -47,26 +53,59 @@ function CameraStatus({ health, offline }: { health: Health | null; offline: boo
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null)
   const [offline, setOffline] = useState(false)
-  const [regions, setRegions] = useState<Region[]>([])
   const [objects, setObjects] = useState<TrackedObject[]>([])
-  const [events, setEvents] = useState<MoveEvent[]>([])
+  const [events, setEvents] = useState<ActivityEvent[]>([])
   const [view, setView] = useState<View>(readView)
   const [openId, setOpenId] = useState<string | null>(null)
   const [highlightId, setHighlightId] = useState<string | null>(null)
-  const [hoverId, setHoverId] = useState<string | null>(null)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [itemsOpen, setItemsOpen] = useState(() => window.innerWidth >= 768)
-  const [scanning, setScanning] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const [wake, setWake] = useState<{ id: number; text: string } | null>(null)
+  const [wakeOn, setWakeOn] = useState(readWakeOn)
+  const [wakeState, setWakeState] = useState<WakeState>('off')
+  const [voiceReady, setVoiceReady] = useState(!speechOutputSupported)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [prompt, setPrompt] = useState<{ id: number; text: string } | null>(null)
+  const goneSince = useRef<Record<string, number>>({}) // item -> when it left the view (ms)
+  const asked = useRef<Set<string>>(new Set()) // items already asked about since they left
+
+  useEffect(() => {
+    // The first click or key press anywhere lets the app speak on its own afterwards.
+    const unlock = () => setVoiceReady(unlockSpeech())
+    window.addEventListener('pointerdown', unlock, { once: true })
+    window.addEventListener('keydown', unlock, { once: true })
+    return () => {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('keydown', unlock)
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
       const [h, o, e] = await Promise.all([api.health(), api.objects(), api.events(10)])
       setHealth(h)
+      // An item that was in view and has stayed out of view for LOST_ASK_MS: ask out loud once.
+      // Only items seen in view during this session count, and seeing one again re-arms it.
+      const t = Date.now()
+      let due = false
+      for (const item of o) {
+        if (item.visible) {
+          goneSince.current[item.object_id] = 0
+          asked.current.delete(item.object_id)
+        } else if (goneSince.current[item.object_id] === 0) {
+          goneSince.current[item.object_id] = t
+        } else if (goneSince.current[item.object_id] && t - goneSince.current[item.object_id] >= LOST_ASK_MS
+                   && !asked.current.has(item.object_id)) {
+          asked.current.add(item.object_id)
+          due = true
+        }
+      }
+      if (due) {
+        setPrompt({ id: t, text: 'Are you looking for something?' })
+        setView('list') // the voice conversation lives in the search panel
+      }
       setObjects(o)
       setEvents(e)
       setOffline(false)
-      if (h.mode !== 'MONITORING') setScanning(true)
     } catch {
       setOffline(true)
     }
@@ -74,7 +113,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    api.regions().then(setRegions).catch(() => setOffline(true))
+    api.voice().then((v) => setVoiceConfig({ provider: v.provider, voice_id: v.voice_id, speed: v.speed })).catch(() => undefined)
     refresh()
     const id = setInterval(refresh, POLL_MS)
     return () => clearInterval(id)
@@ -88,18 +127,40 @@ export default function App() {
     }
   }, [view])
 
+  // Hands-free: "where are my keys" (or "hey Keepsake") starts a lookup, like a smart speaker.
+  // Starts after the first click, because browsers need one before the mic and speech work.
+  const onWakeHeard = useCallback((said: string) => {
+    setWake({ id: Date.now(), text: said })
+    setView('list') // the conversation lives in the search panel
+  }, [])
+
+  useEffect(() => {
+    if (!wakeOn || !voiceReady) return
+    startWakeListener(onWakeHeard, setWakeState)
+    return () => stopWakeListener()
+  }, [wakeOn, voiceReady, onWakeHeard])
+
+  function toggleWake() {
+    if (wakeOn && wakeState === 'blocked') {
+      // Try again, e.g. after the user allowed the microphone.
+      stopWakeListener()
+      startWakeListener(onWakeHeard, setWakeState)
+      return
+    }
+    const next = !wakeOn
+    setWakeOn(next)
+    try {
+      localStorage.setItem('keepsake.handsfree', next ? 'on' : 'off')
+    } catch {
+      /* storage unavailable */
+    }
+  }
+
   useEffect(() => {
     if (!highlightId) return
     const t = setTimeout(() => setHighlightId(null), 8000)
     return () => clearTimeout(t)
   }, [highlightId])
-
-  /** A pin was clicked: light up its row in the items list. */
-  function pickPin(id: string) {
-    setSelectedId(id)
-    setItemsOpen(true)
-    requestAnimationFrame(() => document.getElementById(`item-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
-  }
 
   function onAnswer(r: QueryResult) {
     if (!r.object) return
@@ -107,25 +168,16 @@ export default function App() {
     setOpenId(r.object.object_id)
   }
 
-  async function startScan() {
-    try {
-      await api.reposition('start')
-      setScanning(true)
-      refresh()
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Could not start the scan')
-    }
-  }
-
-  const closeScan = useCallback(() => {
-    setScanning(false)
-    api.regions().then(setRegions).catch(() => undefined)
-  }, [])
-
-  const trace = useCameraTrace(view === 'map' && health?.camera === 'active')
   const open = objects.find((o) => o.object_id === openId)
   const seenCount = objects.filter((o) => o.seen).length
-  const canScan = health != null && health.camera !== 'disabled' && health.mode === 'MONITORING'
+  const voiceBanner = !voiceReady && (
+    <button
+      onClick={() => setVoiceReady(unlockSpeech())}
+      className="w-full rounded-xl bg-sunken px-4 py-3 text-left text-[14px] text-muted hover:text-ink"
+    >
+      Click anywhere to turn on voice. Then just say “Where are my keys?”
+    </button>
+  )
 
   return (
     <div className="md:pl-60">
@@ -135,68 +187,13 @@ export default function App() {
         status={<CameraStatus health={health} offline={offline} />}
       />
 
-      {view === 'map' && (
-        <main className="h-[calc(100svh-4.5rem)] p-3 sm:p-5 md:h-svh md:p-6">
-          <PaperSheet>
-            {/* The drawing starts to the right of the panel, so they don't overlap until you pan or zoom. */}
-            <div className="sheet-drawing">
-              <RoomBlueprint
-                regions={regions}
-                objects={objects}
-                highlightId={hoverId ?? selectedId ?? highlightId}
-                peekId={selectedId}
-                onSelect={pickPin}
-                onOpen={setOpenId}
-                trace={trace}
-              />
-            </div>
-
-            {/* Title, items and legend sit on the sheet; the drawing can pass behind them. */}
-            <aside className="sheet-panel">
-              <div className="space-y-2 px-4 pt-4 pb-2">
-                <p className="text-[13px] text-muted">{seenCount} of {objects.length} remembered</p>
-                <h1 className="text-3xl leading-none font-semibold">Your room</h1>
-                {health?.sample && <p className="text-[13px] text-muted">Sample data for design work.</p>}
-                {offline && <p className="text-[13px] text-muted">Can&apos;t reach Keepsake. Start the backend to see updates.</p>}
-                {regions.length === 0 && (
-                  <p className="text-[13px] text-muted">No furniture yet. Scan the room so the map can draw it.</p>
-                )}
-              </div>
-              <button
-                onClick={() => setItemsOpen((v) => !v)}
-                aria-expanded={itemsOpen}
-                className="flex items-center justify-between px-4 pt-2 pb-1.5 text-[15px] font-semibold"
-              >
-                Items <span className="flex items-center gap-1 text-[13px] font-normal text-muted">{objects.length}
-                  <ChevronDown className={`size-4 transition-[rotate] duration-200 ${itemsOpen ? 'rotate-180' : ''}`} />
-                </span>
-              </button>
-              {itemsOpen && (
-                <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-                  <ItemPanel
-                    objects={objects}
-                    activeId={hoverId ?? selectedId ?? highlightId}
-                    onHover={setHoverId}
-                    onPick={(id) => setSelectedId((cur) => (cur === id ? null : id))}
-                  />
-                </div>
-              )}
-            </aside>
-
-            {/* Pin colours, in one row across the top right of the sheet. */}
-            <div className="sheet-legend">
-              <PinLegend />
-            </div>
-          </PaperSheet>
-        </main>
-      )}
-
-      <div className={`mx-auto max-w-6xl px-4 pt-5 pb-28 sm:px-8 sm:pt-8 md:pb-12 ${view === 'map' ? 'hidden' : ''}`}>
+      <div className="mx-auto max-w-6xl px-4 pt-5 pb-28 sm:px-8 sm:pt-8 md:pb-12">
         {health?.sample && (
           <p className="mb-4 rounded-xl bg-sunken px-4 py-3 text-[14px] text-muted">
-            Sample data for design work. Run <code>npm run dev</code> with the backend for the real room.
+            Sample data for design work. Run <code>npm run dev</code> with the backend for real memories.
           </p>
         )}
+        {voiceBanner && <div className="mb-4">{voiceBanner}</div>}
         {offline && (
           <p className="mb-4 rounded-xl bg-sunken px-4 py-3 text-[14px] text-muted">
             Can&apos;t reach Keepsake. Showing the last memories loaded. Start the backend to see updates.
@@ -209,7 +206,16 @@ export default function App() {
               <p className="text-[13px] text-muted">{seenCount} of {objects.length} remembered</p>
               <h1 className="text-3xl leading-none font-semibold">Your items</h1>
             </div>
-            <SearchPanel onResult={onAnswer} />
+            <SearchPanel
+              onResult={onAnswer}
+              prompt={prompt}
+              objects={objects}
+              wake={wake}
+              onWakeHandled={() => setWake(null)}
+              wakeState={wakeOn ? wakeState : 'off'}
+              onToggleWake={toggleWake}
+            />
+            <CameraPanel health={health} />
             <ObjectList objects={objects} now={now} highlightId={highlightId} onOpen={setOpenId} />
             <ActivityFeed events={events} />
           </main>
@@ -222,19 +228,22 @@ export default function App() {
               <CameraPanel health={health} />
               <div className="space-y-5">
                 <PrivacyPanel health={health} onChanged={refresh} />
-                <button onClick={startScan} disabled={!canScan} className="press button-primary self-start">
-                  <ScanLine className="size-4" strokeWidth={1.75} /> Scan room
-                </button>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={() => setSettingsOpen(true)}
+                    className="press flex h-10 items-center gap-2 rounded-xl bg-surface px-3.5 text-[14px] font-medium shadow-ring hover:bg-sunken"
+                  >
+                    <Settings className="size-4" strokeWidth={1.75} /> Customize voice
+                  </button>
+                </div>
               </div>
             </div>
           </main>
         )}
       </div>
 
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {open && <ObjectDetail key={open.object_id} o={open} now={now} onClose={() => setOpenId(null)} />}
-      {scanning && health && health.mode !== 'MONITORING' && (
-        <ScanFlow health={health} regions={regions} onSaved={setRegions} onClose={closeScan} />
-      )}
     </div>
   )
 }

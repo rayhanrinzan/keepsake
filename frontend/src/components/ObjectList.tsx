@@ -1,5 +1,5 @@
 import type { TrackedObject } from '../lib/api'
-import { iconFor, placeName, statusLabel, timeAgo } from '../lib/format'
+import { iconFor, statusLabel, timeAgo } from '../lib/format'
 import { SnapshotPhoto } from './SnapshotPhoto'
 
 const DOT = { live: 'bg-live', past: 'bg-faint', warn: 'bg-caution', none: 'bg-hairline' }
@@ -44,9 +44,7 @@ function ObjectCard({ o, now, highlighted, onOpen }: {
         <p className="text-muted">
           {o.seen ? (
             <>
-              <span className="text-ink">{placeName(o.region!)}</span>
-              <span aria-hidden> · </span>
-              <span className="tabular-nums">{timeAgo(o.last_seen!, now)}</span>
+              Last seen <span className="text-ink tabular-nums">{timeAgo(o.last_seen!, now)}</span>
             </>
           ) : 'Not yet seen'}
         </p>

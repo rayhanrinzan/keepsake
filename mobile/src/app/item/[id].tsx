@@ -1,23 +1,25 @@
 import { router, useLocalSearchParams } from 'expo-router'
-import { ChevronLeft, MapPin } from 'lucide-react-native'
+import { ChevronLeft, Clock } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
 import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { CenterType } from '../../components/CenterType'
 import { T } from '../../components/ui'
-import { ago, getObjects, imageUrl } from '../../lib/api'
+import { ago, getObjects, imageUrl, where } from '../../lib/api'
 import type { TrackedObject } from '../../lib/api'
 import { itemPhoto } from '../../lib/items'
 import { useSettings } from '../../lib/settings'
 import { P } from '../../lib/theme'
 import { speak } from '../../lib/voice'
 
+/** Grounded like the web app: when it was last seen and the photo, never a room location. */
 function sentence(o: TrackedObject) {
-  if (!o.seen || !o.region) return `I haven't seen your ${o.name.toLowerCase()} yet.`
+  if (!o.seen) return `I haven't seen your ${o.name.toLowerCase()} yet.`
   const plural = o.name.endsWith('s')
-  const place = `the ${o.region.toLowerCase()}`
-  if (o.visible) return `Your ${o.name.toLowerCase()} ${plural ? 'are' : 'is'} on ${place}.`
-  return `Your ${o.name.toLowerCase()} ${plural ? 'were' : 'was'} last on ${place}, ${ago(o.last_seen)}.`
+  const noun = o.name.toLowerCase()
+  if (o.visible) return `Your ${noun} ${plural ? 'are' : 'is'} in view right now.`
+  const photo = o.snapshot ? ' Here is the last photo.' : ''
+  return `I last saw your ${noun} ${ago(o.last_seen)}.${photo} ${plural ? 'They' : 'It'} may have moved since.`
 }
 
 /** Locate one item: says where it is out loud as soon as it opens, and types it out as it speaks. */
@@ -27,7 +29,7 @@ export default function Locate() {
   const { s: prefs } = useSettings()
   const [o, setO] = useState<TrackedObject | null | undefined>(undefined)
   const [round, setRound] = useState(0)
-  const [snap, setSnap] = useState(false)
+  const [snap, setSnap] = useState(true) // the real last photo first, when there is one
 
   function sayIt(item: TrackedObject) {
     setRound(r => r + 1)
@@ -59,9 +61,9 @@ export default function Locate() {
         {o && (
           <>
             <View style={s.hero}>
-              {/* Tap the photo to see the last picture the camera took of it, when there is one. */}
+              {/* The last picture the camera took of it, when there is one; tap to swap with the item's picture. */}
               <Pressable onPress={() => o.snapshot && setSnap(v => !v)} disabled={!o.snapshot} accessibilityRole={o.snapshot ? 'button' : undefined}
-                accessibilityLabel={o.snapshot ? (snap ? `Show the picture of your ${o.name.toLowerCase()}` : `Show where your ${o.name.toLowerCase()} was last seen`) : undefined}
+                accessibilityLabel={o.snapshot ? (snap ? `Show the picture of your ${o.name.toLowerCase()}` : `Show the last photo of your ${o.name.toLowerCase()}`) : undefined}
                 style={[s.frame, snap && s.frameSnap]}>
                 {snap && o.snapshot
                   ? <Image source={{ uri: imageUrl(o.snapshot.image_url) }} style={StyleSheet.absoluteFill} resizeMode="cover" accessibilityLabel={`Last photo of your ${o.name.toLowerCase()}`} />
@@ -69,8 +71,8 @@ export default function Locate() {
               </Pressable>
               <T size={34} weight="medium" color={P.line}>{o.name}</T>
               <View style={s.place}>
-                <MapPin size={18} color={P.soft} />
-                <T size={18} color={P.soft}>{o.region ?? 'Not seen yet'}</T>
+                <Clock size={18} color={P.soft} />
+                <T size={18} color={P.soft}>{where(o)}</T>
               </View>
             </View>
             <View style={s.said}>

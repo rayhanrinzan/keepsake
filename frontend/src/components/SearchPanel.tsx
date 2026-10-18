@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { LoaderCircle, Mic, Search, Square } from 'lucide-react'
 import { api, ApiError } from '../lib/api'
-import type { QueryResult } from '../lib/api'
-import { listenOnce, speak, speechInputSupported, stopVoice, VoiceError } from '../lib/voice'
+import type { QueryResult, TrackedObject } from '../lib/api'
+import { listenOnce, pauseWake, resumeWake, speak, speechInputSupported, stopVoice, VoiceError } from '../lib/voice'
+import type { WakeState } from '../lib/voice'
 
 /** Conversation: IDLE → PROMPTING → LISTENING → LOOKING_UP → RESPONDING → IDLE */
 type Phase = 'IDLE' | 'PROMPTING' | 'LISTENING' | 'LOOKING_UP' | 'RESPONDING'
@@ -15,7 +16,41 @@ const PHASE_LABEL: Record<Phase, string> = {
   RESPONDING: 'Answering…',
 }
 
-export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }) {
+const DECLINE = /^(no|nope|nah|nothing|i'?m (good|fine|ok(ay)?)|not really|no thanks?)\b/i
+// A bare "yes" names no item, so we ask which one. "Yes, my keys" goes straight to the lookup.
+const AFFIRM = /^(yes|yeah|yep|yup|ya|sure|i am|uh[- ]?huh|please|yes please|kind of|maybe)[.!]?$/i
+
+function joinList(names: string[], last: 'and' | 'or') {
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')}, ${last} ${names.at(-1)}`
+}
+
+/** "Okay, which item?" plus the items Keepsake has seen (or, if none yet, everything it tracks). */
+function whichItem(objects: TrackedObject[]) {
+  const seen = objects.filter((o) => o.seen).map((o) => o.name.toLowerCase())
+  if (seen.length) return `Okay, which item? I've seen your ${joinList(seen, 'and')}.`
+  const all = objects.map((o) => o.name.toLowerCase())
+  return all.length ? `Okay, which item? I can look for your ${joinList(all, 'or')}.` : 'Okay, which item?'
+}
+
+const WAKE_LABEL: Record<WakeState, string> = {
+  off: 'Hands-free is off.',
+  listening: 'Hands-free is on. Just say “Where are my keys?”',
+  paused: 'Hands-free is on.',
+  blocked: 'Hands-free needs the microphone. Allow it in your browser settings.',
+  unsupported: '',
+}
+
+export function SearchPanel({ onResult, prompt, wake, onWakeHandled, wakeState, onToggleWake, objects = [] }: {
+  onResult: (r: QueryResult) => void
+  objects?: TrackedObject[]
+  /** Someone said a wake phrase like "where are my keys". A new id starts a lookup. */
+  wake?: { id: number; text: string } | null
+  onWakeHandled?: () => void
+  wakeState?: WakeState
+  onToggleWake?: () => void
+  /** Ask unprompted (e.g. someone walked out of view). A new id starts a new conversation. */
+  prompt?: { id: number; text: string } | null
+}) {
   const [phase, setPhase] = useState<Phase>('IDLE')
   const [heard, setHeard] = useState('')
   const [answer, setAnswer] = useState<string | null>(null)
@@ -23,9 +58,34 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
   const [text, setText] = useState('')
   const run = useRef(0) // increments to cancel an in-flight conversation
 
-  useEffect(() => () => stopVoice(), [])
+  const phaseRef = useRef<Phase>('IDLE')
+  phaseRef.current = phase
 
-  async function lookUp(q: string, id: number, spoken: boolean) {
+  useEffect(() => () => {
+    stopVoice()
+    resumeWake() // don't leave hands-free paused if we unmount mid-conversation
+  }, [])
+
+  // Hands-free listening steps aside while Keepsake talks or asks, so it doesn't hear itself.
+  useEffect(() => {
+    if (phase === 'IDLE') resumeWake()
+    else pauseWake()
+  }, [phase])
+
+  useEffect(() => {
+    if (!wake) return
+    onWakeHandled?.()
+    if (phaseRef.current === 'IDLE') startFromWake(wake.text)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wake?.id])
+
+  useEffect(() => {
+    // Don't interrupt a conversation that's already going.
+    if (prompt && phaseRef.current === 'IDLE') startVoice(prompt.text)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prompt?.id])
+
+  async function lookUp(q: string, id: number, spoken: boolean, askIfUnknown = false): Promise<void> {
     setPhase('LOOKING_UP')
     let r: QueryResult
     try {
@@ -41,6 +101,15 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
       return
     }
     if (id !== run.current) return
+    if (askIfUnknown && !r.category) {
+      // "Where is my…" with no item (or one we don't track): ask which item instead of apologising.
+      const follow = whichItem(objects)
+      setAnswer(follow)
+      const said = await ask(follow, id)
+      if (said === null) return
+      if (DECLINE.test(said)) return declined(id)
+      return lookUp(said, id, spoken)
+    }
     setAnswer(r.answer)
     onResult(r)
     setPhase('RESPONDING')
@@ -48,7 +117,36 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
     if (id === run.current) setPhase('IDLE')
   }
 
-  async function startVoice() {
+  /** Say `question`, then listen for one reply. Null if the conversation ended (error/cancel). */
+  async function ask(question: string, id: number): Promise<string | null> {
+    setPhase('PROMPTING')
+    await speak(question) // the mic opens only after the prompt finishes
+    if (id !== run.current) return null
+    setPhase('LISTENING')
+    setHeard('')
+    try {
+      const said = await listenOnce(setHeard)
+      if (id !== run.current) return null
+      setHeard(said)
+      return said
+    } catch (e) {
+      if (id !== run.current) return null
+      const ve = e instanceof VoiceError ? e : new VoiceError('other', 'Voice input stopped unexpectedly.')
+      if (ve.code === 'aborted') return null
+      setError(ve.code === 'no-speech' ? "I didn't hear anything. Press Voice to try again." : ve.message)
+      setPhase('IDLE')
+      if (ve.code === 'no-speech') await speak("I didn't hear anything.")
+      return null
+    }
+  }
+
+  async function declined(id: number) {
+    setPhase('RESPONDING')
+    await speak('Okay.')
+    if (id === run.current) setPhase('IDLE')
+  }
+
+  async function startVoice(question = 'What are you looking for?') {
     const id = ++run.current
     setError(null)
     setAnswer(null)
@@ -57,25 +155,27 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
       setError("Voice isn't available in this browser. Type instead, or use Chrome, Edge or Safari.")
       return
     }
-    setPhase('PROMPTING')
-    await speak('What are you looking for?') // the mic opens only after the prompt finishes
-    if (id !== run.current) return
-    setPhase('LISTENING')
-    let said: string
-    try {
-      said = await listenOnce(setHeard)
-    } catch (e) {
-      if (id !== run.current) return
-      const ve = e instanceof VoiceError ? e : new VoiceError('other', 'Voice input stopped unexpectedly.')
-      if (ve.code === 'aborted') return
-      setError(ve.code === 'no-speech' ? "I didn't hear anything. Press Voice to try again." : ve.message)
-      setPhase('IDLE')
-      if (ve.code === 'no-speech') await speak("I didn't hear anything.")
-      return
+    let said = await ask(question, id)
+    if (said === null) return
+    if (DECLINE.test(said)) return declined(id)
+    if (AFFIRM.test(said.trim())) {
+      const follow = whichItem(objects)
+      setAnswer(follow)
+      said = await ask(follow, id)
+      if (said === null) return
+      if (DECLINE.test(said)) return declined(id)
     }
-    if (id !== run.current) return
-    setHeard(said)
     await lookUp(said, id, true)
+  }
+
+  /** Started hands-free: `said` is what followed the wake phrase, e.g. "where are my keys". */
+  async function startFromWake(said: string) {
+    const id = ++run.current
+    stopVoice()
+    setError(null)
+    setAnswer(null)
+    setHeard(said)
+    await lookUp(said, id, true, true)
   }
 
   function stop() {
@@ -101,7 +201,7 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
     <section className="card rounded-[24px] p-3">{/* outer 24 = input 12 + padding 12 */}
       <div className="flex gap-2">
         <button
-          onClick={busy ? stop : startVoice}
+          onClick={busy ? stop : () => startVoice()}
           aria-label={busy ? 'Stop voice assistant' : 'Ask by voice'}
           className="glossy press relative flex h-12 shrink-0 items-center gap-2 rounded-xl pr-5 pl-4 font-medium text-white"
         >
@@ -117,11 +217,23 @@ export function SearchPanel({ onResult }: { onResult: (r: QueryResult) => void }
             id="ask"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Where is my phone?"
+            placeholder="Where are my keys?"
             className="h-12 w-full rounded-xl border border-hairline bg-canvas pr-3 pl-10 outline-none placeholder:text-faint focus:border-deep/50 focus:bg-surface"
           />
         </form>
       </div>
+
+      {wakeState && wakeState !== 'unsupported' && onToggleWake && (
+        <div className="flex items-center justify-between gap-3 px-1 pt-2.5 text-[13px] text-muted">
+          <span className="flex items-center gap-2">
+            {wakeState === 'listening' && <span aria-hidden className="size-2 rounded-full bg-live" />}
+            {WAKE_LABEL[wakeState]}
+          </span>
+          <button onClick={onToggleWake} className="shrink-0 font-medium hover:text-ink">
+            {wakeState === 'off' || wakeState === 'blocked' ? 'Turn on' : 'Turn off'}
+          </button>
+        </div>
+      )}
 
       {(busy || answer || error || heard) && (
         <div className="space-y-1 px-1 pt-3 pb-1" aria-live="polite">
