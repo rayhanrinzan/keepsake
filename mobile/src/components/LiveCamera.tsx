@@ -64,6 +64,12 @@ export function LiveCamera() {
         <View style={[s.dot, { backgroundColor: ok ? '#3ddc97' : '#ffb27a' }]} />
         <T size={13} color="#6b6b6b" numberOfLines={2} style={{ flex: 1 }}>{status}</T>
       </View>
+      {ok && health && (
+        <T size={13} color="#6b6b6b">
+          {health.detections.length === 0 ? 'No tracked items in view' : `In view: ${health.detections.map(d => d.name).join(', ')}`}
+          {health.person_present ? ' · Person in view' : ''}
+        </T>
+      )}
     </View>
   )
 }

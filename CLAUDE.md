@@ -54,10 +54,15 @@ also binds port 8000, so run one or the other.
   phones). Items: `SearchPanel` (voice, hands-free wake phrase, typed), `CameraPanel`, `ObjectList`,
   `ObjectDetail`, `ActivityFeed`. Settings: `CameraPanel`, `PrivacyPanel`, `SettingsDialog` (Customize
   voice). `App.tsx` polls every 1.5 s.
+- `mobile/`: Expo app (Amy's UI). Feature parity with the web app when run in a browser: Grok voice +
+  voice settings (stored in the backend), hands-free wake phrase, "Are you looking for something?",
+  answers with Amanda's description, boxed last photo + earlier photos, Recent activity, camera status,
+  privacy controls, optional setup camera feed. Keep new web features in both apps.
+- The backend allows CORS from any loopback origin (web app 5173, Expo web 8081, …); it binds 127.0.0.1.
 - `integrations/photon/`: TypeScript Photon Spectrum agent (`spectrum-ts` 12.11): polls
   `/api/reminders/alerts`, claims, checks its own E.164 allowlist (`.env`, git-ignored), sends, reports
   `accepted`/`failed` (accepted ≠ delivered). Reminders and "where is my …" replies attach the item's
-  last-seen photo (fetched from `/api/snapshots/{id}/image`, max 3); a missing photo never blocks the text. Inbound commands: modes, I have it, remind me later,
+  last-seen photo with the item circled in white (`?highlight=1`) (fetched from `/api/snapshots/{id}/image`, max 3); a missing photo never blocks the text. Inbound commands: modes, I have it, remind me later,
   pause/resume, heading out, "where is my …". See its README and EVENTS.md.
 - `scripts/demo_preflight.py`, `scripts/camera_diagnostic.py`: read-only checks of a running backend.
 
