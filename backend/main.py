@@ -22,6 +22,7 @@ from reminders import ReminderEngine
 from reminders_api import reminders_router
 from memory import ItemMemory, answer_query, parse_query
 from snapshots import SnapshotStore
+from describe import SceneDescriber
 from voice import SPEED_RANGE, GrokTTS, TTSError, load_env_file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -50,6 +51,7 @@ reminders = ReminderEngine(db, memory, status_fn=lambda: dict(worker.status) if 
                            photo_available=lambda photo: snapshots.path_for(photo["filename"]) is not None)
 worker = None
 grok = GrokTTS(os.environ["XAI_API_KEY"]) if os.getenv("XAI_API_KEY") else None
+describer = SceneDescriber()  # Grok vision: "on a green seat next to…" (CTRLF_DESCRIBE=0 turns it off)
 
 
 @asynccontextmanager
@@ -228,10 +230,20 @@ class Query(BaseModel):
     text: str
 
 
+def describe_surroundings(obj: dict, noun: str) -> str | None:
+    """One sentence about what's around the item in its newest photo (Grok vision), or None."""
+    snap = obj.get("snapshot") or {}
+    s = db.get_snapshot(snap["id"]) if snap.get("id") else None
+    path = snapshots.path_for(s["filename"]) if s else None
+    return describer.describe(snap.get("id"), path, noun, snap.get("bbox"))
+
+
 @app.post("/api/query")
 def query(q: Query):
-    r = answer_query(q.text, lambda cat: next(o for o in all_objects() if o["category"] == cat))
-    return {"found": r["found"], "answer": r["answer"], "object": r["object"], "category": r["category"]}
+    r = answer_query(q.text, lambda cat: next(o for o in all_objects() if o["category"] == cat),
+                     describe_surroundings)
+    return {"found": r["found"], "answer": r["answer"], "object": r["object"], "category": r["category"],
+            "surroundings": r.get("surroundings")}
 
 # ---------- settings & privacy ----------
 

@@ -11,6 +11,7 @@ Optional: if CLIP can't load, every detection passes through unchanged.
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 import cv2
@@ -30,8 +31,22 @@ PROMPTS: dict[str, tuple[list[str], list[str]]] = {
                _COMMON + ["a shoe", "sneakers", "a smartphone", "a water bottle", "a book"]),
     "airpods case": (["an AirPods case", "a small white earbuds case"],
                      _COMMON + ["a white mug", "a phone charger", "a shoe"]),
+    # Live false hits on 2026-10-17: shoes, a wall plug and far-off specks as "bottle"; a backpack
+    # icon on a laptop screen as "backpack".
+    "bottle": (["a water bottle", "a reusable drink bottle"],
+               _COMMON + ["a shoe", "sneakers", "a person's leg", "a wall power outlet", "a laptop",
+                          "a cup"]),
+    "backpack": (["a backpack", "a backpack on the floor"],
+                 _COMMON + ["a laptop screen", "a computer screen", "a jacket", "a chair", "a pillow"]),
 }
+# Which items get the check. Keys and AirPods are left to the trained model: live, CLIP was rejecting
+# the real ones, and they had few look-alike hits. Comma-separated categories, e.g. "wallet,glasses".
+CHECKED = {c.strip() for c in os.getenv("CTRLF_VERIFY_ITEMS", "wallet,glasses,bottle,backpack").split(",")
+           if c.strip()}
 MIN_SCORE = 0.25  # the item's share of CLIP's probability must also reach this
+# Boxes smaller than this share of the frame are dropped before anything else: on a chest camera your
+# own items are close, and the tiny far-off boxes were nearly all false hits (and too small for CLIP).
+MIN_ITEM_AREA = float(os.getenv("CTRLF_MIN_ITEM_AREA", "0.004"))
 CACHE_SECONDS = 1.0  # a box near the last checked one reuses its verdict this long (CLIP ~55 ms/box)
 CACHE_DISTANCE = 0.12  # "near": box centers within this fraction of the frame
 
@@ -105,7 +120,7 @@ class ClipVerifier:
         now = time.monotonic() if now is None else now
         verdict, fresh = {}, []
         for o in observations:
-            if o.category in PROMPTS and o.bbox:
+            if o.category in PROMPTS and o.category in CHECKED and o.bbox:
                 cached = self._cached(o, now)
                 if cached is None:
                     fresh.append(o)
@@ -118,3 +133,10 @@ class ClipVerifier:
                 if cache is not None:
                     cache[o.category] = (now, ((o.bbox[0] + o.bbox[2]) / 2, (o.bbox[1] + o.bbox[3]) / 2), ok)
         return [o for o in observations if verdict.get(id(o), True)]
+
+
+def big_enough(observations: list, items) -> list:
+    """Drop item boxes under MIN_ITEM_AREA of the frame (bbox is normalized). People and hands pass."""
+    def area(b):
+        return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    return [o for o in observations if o.category not in items or not o.bbox or area(o.bbox) >= MIN_ITEM_AREA]
