@@ -1,35 +1,43 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ScanLine, Settings } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Settings } from 'lucide-react'
 import { api } from './lib/api'
-import { setVoiceConfig, speechOutputSupported, unlockSpeech } from './lib/voice'
-import type { Health, MoveEvent, QueryResult, Region, TrackedObject } from './lib/api'
+import { setVoiceConfig, speechOutputSupported, startWakeListener, stopWakeListener, unlockSpeech } from './lib/voice'
+import type { WakeState } from './lib/voice'
+import type { ActivityEvent, Health, QueryResult, TrackedObject } from './lib/api'
 import { ObjectList } from './components/ObjectList'
 import { ObjectDetail } from './components/ObjectDetail'
-import { RoomMap } from './components/RoomMap'
+import { Sidebar } from './components/Sidebar'
+import type { View } from './components/Sidebar'
 import { SearchPanel } from './components/SearchPanel'
 import { CameraPanel } from './components/CameraPanel'
 import { ActivityFeed } from './components/ActivityFeed'
 import { PrivacyPanel } from './components/PrivacyPanel'
-import { ScanFlow } from './components/ScanFlow'
 import { SettingsDialog } from './components/SettingsDialog'
 
 const POLL_MS = 1500
-type View = 'list' | 'map'
 
 function readView(): View {
   try {
-    return localStorage.getItem('keepsake.view') === 'map' ? 'map' : 'list'
+    const v = localStorage.getItem('keepsake.view')
+    return v === 'settings' ? v : 'list'
   } catch {
     return 'list'
   }
 }
 
+function readWakeOn(): boolean {
+  try {
+    return localStorage.getItem('keepsake.handsfree') !== 'off'
+  } catch {
+    return true
+  }
+}
+
 function CameraStatus({ health, offline }: { health: Health | null; offline: boolean }) {
-  const paused = health && health.mode !== 'MONITORING'
   const [label, dot] = offline
     ? ['Offline', 'bg-danger']
     : !health ? ['Connecting…', 'bg-faint']
-      : paused ? ['Paused for scan', 'bg-caution']
+      : health.camera === 'active' && health.warning ? ['Camera paused', 'bg-caution']
         : health.camera === 'active' ? ['Watching', 'bg-live']
           : health.camera === 'disabled' ? ['Camera off', 'bg-faint']
             : ['Camera unavailable', 'bg-caution']
@@ -44,16 +52,15 @@ function CameraStatus({ health, offline }: { health: Health | null; offline: boo
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null)
   const [offline, setOffline] = useState(false)
-  const [regions, setRegions] = useState<Region[]>([])
   const [objects, setObjects] = useState<TrackedObject[]>([])
-  const [events, setEvents] = useState<MoveEvent[]>([])
+  const [events, setEvents] = useState<ActivityEvent[]>([])
   const [view, setView] = useState<View>(readView)
   const [openId, setOpenId] = useState<string | null>(null)
   const [highlightId, setHighlightId] = useState<string | null>(null)
-  const [scanning, setScanning] = useState(false)
   const [now, setNow] = useState(Date.now())
-  const [prompt, setPrompt] = useState<{ id: number; text: string } | null>(null)
-  const leftCount = useRef<number | null>(null) // departures already handled
+  const [wake, setWake] = useState<{ id: number; text: string } | null>(null)
+  const [wakeOn, setWakeOn] = useState(readWakeOn)
+  const [wakeState, setWakeState] = useState<WakeState>('off')
   const [voiceReady, setVoiceReady] = useState(!speechOutputSupported)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
@@ -72,16 +79,11 @@ export default function App() {
     try {
       const [h, o, e] = await Promise.all([api.health(), api.objects(), api.events(10)])
       setHealth(h)
-      // Someone just walked out of view: offer help. The first poll only sets the baseline.
-      const left = h.person_left_count ?? 0
-      if (leftCount.current !== null && left > leftCount.current) {
-        setPrompt({ id: left, text: 'Are you looking for something?' })
-      }
-      leftCount.current = left
+      // No automatic "Are you looking for something?" when someone walks out of view: usually
+      // they just put something down. Lookups start from a wake phrase instead (see below).
       setObjects(o)
       setEvents(e)
       setOffline(false)
-      if (h.mode !== 'MONITORING') setScanning(true)
     } catch {
       setOffline(true)
     }
@@ -89,7 +91,6 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    api.regions().then(setRegions).catch(() => setOffline(true))
     api.voice().then((v) => setVoiceConfig({ provider: v.provider, voice_id: v.voice_id, speed: v.speed })).catch(() => undefined)
     refresh()
     const id = setInterval(refresh, POLL_MS)
@@ -104,6 +105,35 @@ export default function App() {
     }
   }, [view])
 
+  // Hands-free: "where are my keys" (or "hey Keepsake") starts a lookup, like a smart speaker.
+  // Starts after the first click, because browsers need one before the mic and speech work.
+  const onWakeHeard = useCallback((said: string) => {
+    setWake({ id: Date.now(), text: said })
+    setView('list') // the conversation lives in the search panel
+  }, [])
+
+  useEffect(() => {
+    if (!wakeOn || !voiceReady) return
+    startWakeListener(onWakeHeard, setWakeState)
+    return () => stopWakeListener()
+  }, [wakeOn, voiceReady, onWakeHeard])
+
+  function toggleWake() {
+    if (wakeOn && wakeState === 'blocked') {
+      // Try again, e.g. after the user allowed the microphone.
+      stopWakeListener()
+      startWakeListener(onWakeHeard, setWakeState)
+      return
+    }
+    const next = !wakeOn
+    setWakeOn(next)
+    try {
+      localStorage.setItem('keepsake.handsfree', next ? 'on' : 'off')
+    } catch {
+      /* storage unavailable */
+    }
+  }
+
   useEffect(() => {
     if (!highlightId) return
     const t = setTimeout(() => setHighlightId(null), 8000)
@@ -116,114 +146,81 @@ export default function App() {
     setOpenId(r.object.object_id)
   }
 
-  async function startScan() {
-    try {
-      await api.reposition('start')
-      setScanning(true)
-      refresh()
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Could not start the scan')
-    }
-  }
-
-  const closeScan = useCallback(() => {
-    setScanning(false)
-    api.regions().then(setRegions).catch(() => undefined)
-  }, [])
-
   const open = objects.find((o) => o.object_id === openId)
   const seenCount = objects.filter((o) => o.seen).length
-  const canScan = health != null && health.camera !== 'disabled' && health.mode === 'MONITORING'
+  const voiceBanner = !voiceReady && (
+    <button
+      onClick={() => setVoiceReady(unlockSpeech())}
+      className="w-full rounded-xl bg-sunken px-4 py-3 text-left text-[14px] text-muted hover:text-ink"
+    >
+      Click anywhere to turn on voice. Then just say “Where are my keys?”
+    </button>
+  )
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pt-5 pb-16 sm:px-6 sm:pt-8">
-      <header className="mb-6 flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Keepsake</h1>
-          <p className="text-[14px] text-muted">Your room remembers, so you don&apos;t have to.</p>
-        </div>
-        <div className="flex items-center gap-4">
-          <CameraStatus health={health} offline={offline} />
-          <button
-            onClick={startScan}
-            disabled={!canScan}
-            className="press flex h-10 items-center gap-2 rounded-xl border border-transparent bg-surface px-3.5 text-[14px] font-medium shadow-ring hover:bg-sunken disabled:opacity-50"
-          >
-            <ScanLine className="size-4" strokeWidth={1.75} /> Scan room
-          </button>
-          <button
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Settings"
-            className="press flex size-10 items-center justify-center rounded-xl border border-transparent bg-surface shadow-ring hover:bg-sunken"
-          >
-            <Settings className="size-4" strokeWidth={1.75} />
-          </button>
-        </div>
-      </header>
+    <div className="md:pl-60">
+      <Sidebar
+        view={view}
+        onView={setView}
+        status={<CameraStatus health={health} offline={offline} />}
+      />
 
-      {!voiceReady && (
-        <button
-          onClick={() => setVoiceReady(unlockSpeech())}
-          className="mb-4 w-full rounded-xl bg-sunken px-4 py-3 text-left text-[14px] text-muted hover:text-ink"
-        >
-          Click anywhere to turn on voice prompts, like “Are you looking for something?” when you leave the room.
-        </button>
-      )}
+      <div className="mx-auto max-w-6xl px-4 pt-5 pb-28 sm:px-8 sm:pt-8 md:pb-12">
+        {health?.sample && (
+          <p className="mb-4 rounded-xl bg-sunken px-4 py-3 text-[14px] text-muted">
+            Sample data for design work. Run <code>npm run dev</code> with the backend for real memories.
+          </p>
+        )}
+        {voiceBanner && <div className="mb-4">{voiceBanner}</div>}
+        {offline && (
+          <p className="mb-4 rounded-xl bg-sunken px-4 py-3 text-[14px] text-muted">
+            Can&apos;t reach Keepsake. Showing the last memories loaded. Start the backend to see updates.
+          </p>
+        )}
 
-      {offline && (
-        <p className="mb-4 rounded-xl bg-caution-soft px-4 py-3 text-caution">
-          Can&apos;t reach Keepsake. Showing the last memories loaded. Start the backend to see updates.
-        </p>
-      )}
-
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <main className="min-w-0 space-y-5">
-          <SearchPanel onResult={onAnswer} prompt={prompt} objects={objects} />
-
-          <div className="flex items-center justify-between gap-3">
-            {/* Segmented control: inner radius 8 + padding 4 = outer 12 */}
-            <div role="tablist" aria-label="View" className="inline-flex rounded-xl bg-sunken p-1">
-              {(['list', 'map'] as const).map((key) => (
-                <button
-                  key={key}
-                  role="tab"
-                  aria-selected={view === key}
-                  onClick={() => setView(key)}
-                  className={`h-8 rounded-lg border border-transparent px-4 text-[14px] font-medium transition-[background-color,color] duration-150 ${view === key ? 'bg-surface text-ink shadow-ring' : 'text-muted hover:text-ink'}`}
-                >
-                  {key === 'list' ? 'List' : 'Map'}
-                </button>
-              ))}
+        {view === 'list' && (
+          <main className="space-y-5">
+            <div className="space-y-2">
+              <p className="text-[13px] text-muted">{seenCount} of {objects.length} remembered</p>
+              <h1 className="text-3xl leading-none font-semibold">Your items</h1>
             </div>
-            <span className="text-[13px] text-muted tabular-nums">{seenCount} of {objects.length} remembered</span>
-          </div>
-
-          {view === 'list' ? (
-            <ObjectList objects={objects} now={now} highlightId={highlightId} onOpen={setOpenId} />
-          ) : (
-            <RoomMap
-              regions={regions}
+            <SearchPanel
+              onResult={onAnswer}
               objects={objects}
-              highlightId={highlightId}
-              onOpen={setOpenId}
-              onScan={startScan}
-              referenceUrl={health?.reference_ready ? `${api.referenceUrl}?v=${health.view_id}` : null}
+              wake={wake}
+              onWakeHandled={() => setWake(null)}
+              wakeState={wakeOn ? wakeState : 'off'}
+              onToggleWake={toggleWake}
             />
-          )}
-        </main>
+            <CameraPanel health={health} />
+            <ObjectList objects={objects} now={now} highlightId={highlightId} onOpen={setOpenId} />
+            <ActivityFeed events={events} />
+          </main>
+        )}
 
-        <aside className="space-y-4">
-          <CameraPanel health={health} />
-          <ActivityFeed events={events} />
-          <PrivacyPanel health={health} onChanged={refresh} />
-        </aside>
+        {view === 'settings' && (
+          <main className="space-y-5">
+            <h1 className="text-3xl leading-none font-semibold">Settings</h1>
+            <div className="grid gap-5 lg:grid-cols-2">
+              <CameraPanel health={health} />
+              <div className="space-y-5">
+                <PrivacyPanel health={health} onChanged={refresh} />
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={() => setSettingsOpen(true)}
+                    className="press flex h-10 items-center gap-2 rounded-xl bg-surface px-3.5 text-[14px] font-medium shadow-ring hover:bg-sunken"
+                  >
+                    <Settings className="size-4" strokeWidth={1.75} /> Customize voice
+                  </button>
+                </div>
+              </div>
+            </div>
+          </main>
+        )}
       </div>
 
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {open && <ObjectDetail key={open.object_id} o={open} now={now} onClose={() => setOpenId(null)} />}
-      {scanning && health && health.mode !== 'MONITORING' && (
-        <ScanFlow health={health} regions={regions} onSaved={setRegions} onClose={closeScan} />
-      )}
     </div>
   )
 }

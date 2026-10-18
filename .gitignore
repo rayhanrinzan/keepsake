@@ -25,11 +25,14 @@ backend/data/
 *.jpg
 *.jpeg
 *.png
+!frontend/public/*.png
 recordings/
 runs/
 
 # model weights (downloaded on first run)
 *.pt
+# ...except our trained items model, shared with the team (see CLAUDE.md)
+!backend/models/items.pt
 *.onnx
 
 # misc
@@ -40,3 +43,6 @@ tmp/
 # room areas written by Scan room (local to each setup)
 backend/regions.json
 backend/regions.tmp
+
+# MediaPipe model files
+*.task

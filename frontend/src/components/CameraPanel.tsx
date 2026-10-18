@@ -69,7 +69,7 @@ export function LiveFeed({ health, className = '' }: { health: Health | null; cl
   }, [])
   const stale = active && src != null && now - lastAt > STALE_MS
   return (
-    <div className={`relative overflow-hidden bg-ink ${className}`}>
+    <div className={`relative overflow-hidden bg-paper ${className}`}>
       {active && src ? (
         <>
           <img
