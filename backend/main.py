@@ -84,8 +84,10 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Keepsake", lifespan=lifespan)
+# Pages on this machine only: the web app (5173) and the mobile app's web build (Expo, 8081 or any
+# other local port). The backend itself binds 127.0.0.1.
 app.add_middleware(CORSMiddleware,
-                   allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+                   allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
                    allow_methods=["*"], allow_headers=["*"])
 app.include_router(reminders_router(reminders))
 
@@ -189,7 +191,7 @@ def get_object_snapshots(object_id: str, limit: int = 20):
 
 @app.get("/api/snapshots/{snapshot_id}/image")
 def get_snapshot_image(snapshot_id: int, highlight: bool = False):
-    """The stored photo. `highlight=1` circles the item (used for photos sent over Photon)."""
+    """The stored photo. `highlight=1` circles the item in white (used for photos sent over Photon)."""
     s = db.get_snapshot(snapshot_id)
     path = snapshots.path_for(s["filename"]) if s else None
     if path is None:

@@ -116,8 +116,9 @@ class SnapshotStore:
         # Pad the box so the circle surrounds the item instead of cutting through it.
         axes = (max(int((x1 - x0) * 0.75), 24), max(int((y1 - y0) * 0.75), 24))
         thickness = max(4, w // 160)
-        cv2.ellipse(image, center, axes, 0, 0, 360, (255, 255, 255), thickness + 4, cv2.LINE_AA)
-        cv2.ellipse(image, center, axes, 0, 0, 360, (0, 0, 255), thickness, cv2.LINE_AA)
+        # White, like the app's photo box, on a thin dark edge so it still shows on light surfaces.
+        cv2.ellipse(image, center, axes, 0, 0, 360, (0, 0, 0), thickness + 3, cv2.LINE_AA)
+        cv2.ellipse(image, center, axes, 0, 0, 360, (255, 255, 255), thickness, cv2.LINE_AA)
         ok, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 85])
         return buf.tobytes() if ok else None
 

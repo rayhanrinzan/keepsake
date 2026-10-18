@@ -15,6 +15,14 @@ Press `w` for the browser, or scan the QR code with Expo Go on your phone (same 
 Screens live in `src/app/` (one file per screen). Live mode reads `/api/objects` and asks `/api/query`.
 Sample data (`src/lib/sample.ts`) is only used by `npm run sample`.
 
+**Same features as the web app** (when run in a browser): Grok voices (Settings → Voice: engine, voice,
+speed, preview; saved in the backend so both apps sound the same), hands-free "where are my keys" /
+"where did I put my water bottle" (Settings → Hands-free), "Are you looking for something?" when an item
+has been out of view 10 s, answers with the description of where the item was, the last photo with the
+item boxed plus earlier photos on the item page, last-photo thumbnails, Recent activity, the camera status,
+and Privacy (save photos, clear all memories). On a phone build Grok and speech recognition fall back to
+the device voice and typing.
+
 **Setting up the camera:** tap the logo for Settings, then **Setup → Show camera feed**. The live view of the
 worn camera (and its status, e.g. black frames) appears above My Items. It's off by default and remembered
 on the device, so turn it off again before handing the phone to someone (or for judging).

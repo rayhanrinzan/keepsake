@@ -8,6 +8,7 @@ export interface Settings {
   voiceRate: number // 0.7 slow .. 1 normal
   listenAfterSpeaking: boolean
   assist: Assist // how much Keepsake leads the conversation
+  handsFree: boolean // listen in the background for "where are my keys" (browser only)
   showCamera: boolean // setup only: the live camera feed on the home screen (off for the person using it)
 }
 
@@ -21,7 +22,7 @@ export type Assist = 'more' | 'some' | 'less'
 // How often Keepsake checks in, in minutes, for each level (none for less help).
 export const CHECK_IN: Record<Assist, number | null> = { more: 10, some: 45, less: null }
 
-const DEFAULTS: Settings = { textScale: 1, voiceVolume: 1, voiceRate: 0.85, listenAfterSpeaking: false, assist: 'some', showCamera: false }
+const DEFAULTS: Settings = { textScale: 1, voiceVolume: 1, voiceRate: 0.85, listenAfterSpeaking: false, assist: 'some', handsFree: true, showCamera: false }
 const KEY = 'keepsake.settings'
 
 const Ctx = createContext<{ s: Settings; set: (p: Partial<Settings>) => void }>({ s: DEFAULTS, set: () => {} })

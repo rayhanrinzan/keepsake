@@ -1,7 +1,7 @@
 import { ask } from './api'
 import type { TrackedObject } from './api'
 
-export type Answer = { text: string; object?: TrackedObject | null }
+export type Answer = { text: string; object?: TrackedObject | null; category?: string | null }
 
 /** What Keepsake says back to one question: the date and time locally, everything else from the device. */
 export async function answer(q: string): Promise<Answer> {
@@ -11,7 +11,7 @@ export async function answer(q: string): Promise<Answer> {
   }
   try {
     const a = await ask(q)
-    return { text: a.answer, object: a.object }
+    return { text: a.answer, object: a.object, category: a.category ?? (a.object ? a.object.category : null) }
   } catch {
     return { text: "I can't reach your Keepsake right now. Try again in a moment." }
   }

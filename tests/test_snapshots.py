@@ -129,7 +129,7 @@ def test_frozen_feed_means_identical_frames_not_a_still_scene():
     assert "np.array_equal(sample, self._last_sample)" in open(vision.__file__).read()
 
 
-def test_highlighted_photo_circles_the_item(store, db):
+def test_highlighted_photo_circles_the_item_in_white(store, db):
     import cv2
     import numpy as np
     frame = np.full((360, 640, 3), 90, np.uint8)
@@ -138,7 +138,7 @@ def test_highlighted_photo_circles_the_item(store, db):
     [s] = db.get_snapshots("bottle_01")
     image = cv2.imdecode(np.frombuffer(store.highlighted(s), np.uint8), cv2.IMREAD_COLOR)
     b, g, r = (int(v) for v in image[int(0.45 * 360), int(0.45 * 640 + 0.075 * 640)])
-    assert r > 180 and g < 80 and b < 80  # red ring at the right edge of the padded box
+    assert min(r, g, b) > 200  # white ring at the right edge of the padded box
     assert abs(int(image[10, 10][2]) - 90) < 10  # rest of the photo untouched
     raw = cv2.imread(str(store.path_for(s["filename"])))
     assert abs(int(raw[int(0.45 * 360), int(0.525 * 640)][2]) - 90) < 10  # stored photo stays clean
