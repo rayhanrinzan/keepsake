@@ -29,23 +29,32 @@ def make_handler(root: Path, key: str):
         def __init__(self, *a, **k):
             super().__init__(*a, directory=str(root), **k)
 
-        def log_message(self, *a):  # no request log: URLs carry the key
-            pass
+        _set_cookie = False
+
+        def log_message(self, fmt, *args):  # path only: the query carries the key
+            print(f"{self.command} {urlsplit(self.path).path} {args[1] if len(args) > 1 else ''}"
+                  f" cookie={'yes' if self._authorized() else 'no'}"
+                  + (f" ua={self.headers.get('User-Agent', '')[:90]}" if not self.path.startswith(("/api/", "/_expo/", "/assets/")) else ""),
+                  flush=True)
+
+        def end_headers(self):
+            if self._set_cookie:
+                self.send_header("Set-Cookie", f"ks={key}; Path=/; Max-Age=86400; SameSite=Lax; Secure")
+            super().end_headers()
 
         def _authorized(self) -> bool:
             jar = SimpleCookie(self.headers.get("Cookie", ""))
             return "ks" in jar and secrets.compare_digest(jar["ks"].value, key)
 
         def _gate(self) -> bool:
-            """True if the request may go on. A ?k=KEY link sets the cookie and reloads without it."""
+            """True if the request may go on: the key in the link (?k=KEY), which also sets a cookie so
+            the app's own requests carry it, or that cookie."""
             url = urlsplit(self.path)
             given = parse_qs(url.query).get("k", [""])[0]
             if given and secrets.compare_digest(given, key):
-                self.send_response(302)
-                self.send_header("Set-Cookie", f"ks={key}; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax; Secure")
-                self.send_header("Location", url.path or "/")
-                self.end_headers()
-                return False
+                self._set_cookie = True
+                self.path = url.path or "/"
+                return True
             if self._authorized():
                 return True
             body = b"Keepsake: open the link with the key."

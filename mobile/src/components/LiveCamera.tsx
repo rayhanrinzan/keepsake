@@ -21,11 +21,12 @@ export function LiveCamera() {
   const n = useRef(0)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const alive = useRef(true)
+  const demo = useRef(false) // the recorded demo has no camera: stop asking for frames
 
   const fetchNext = (delay: number) => {
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
-      if (alive.current) setNext(imageUrl(`/api/camera/frame?n=${++n.current}`))
+      if (alive.current && !demo.current) setNext(imageUrl(`/api/camera/frame?n=${++n.current}`))
     }, delay)
   }
 
@@ -33,7 +34,7 @@ export function LiveCamera() {
     alive.current = true
     if (SAMPLE) return
     fetchNext(0)
-    const poll = () => getHealth().then(h => { setHealth(h); setDown(false) }).catch(() => setDown(true))
+    const poll = () => getHealth().then(h => { demo.current = Boolean(h.demo); setHealth(h); setDown(false) }).catch(() => setDown(true))
     poll()
     const id = setInterval(poll, HEALTH_MS)
     return () => {
@@ -46,6 +47,7 @@ export function LiveCamera() {
   const status = SAMPLE ? 'No camera in sample mode'
     : down ? "Can't reach the Keepsake backend"
     : !health ? 'Connecting…'
+    : health.demo ? "Recorded demo: the live camera runs on the wearer's laptop."
     : health.error ?? health.warning ?? `Camera ${health.camera} · ${health.fps.toFixed(0)} fps`
   const ok = !SAMPLE && !down && health?.camera === 'active' && !health.warning && !health.error
 
