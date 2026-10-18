@@ -13,9 +13,8 @@ or monitoring device, and reminders are not emergency or medical alerts.
 
 ```
 backend (Python)                                        integrations/photon (TypeScript)
-vision events (events.py) ───┐
-memory moves (fixed camera) ─┼─► reminders.py policy ─► GET /api/reminders/alerts ◄─ poll ─ reminders.ts
-tracked departure (fixed cam)┘   (state per item)       claim → send → result ───────────► Photon ─► iMessage
+vision events (events.py) ──► reminders.py policy ─► GET /api/reminders/alerts ◄─ poll ─ reminders.ts
+                                (state per item)       claim → send → result ───────────► Photon ─► iMessage
                                                         /ack, /check, /settings ◄── inbound.ts ◄── your replies
 ```
 
@@ -46,18 +45,14 @@ Both modes:
   - a newer placement
   - "I have it"
   - a mode change or pause
-  - the camera disconnecting or going dark
-  - Scan room
+  - the camera disconnecting, going dark or freezing
   - the item being lost while moving
   - a missing or stale photo
   - cooldown or age
 
-**Separation** is what makes a reminder due:
-- **Wearable** (default `CTRLF_CAMERA_MODE`): the item has been out of the wearer's view for the delay.
-  This is a weak signal. It means the camera turned away, not that the item stayed behind.
-- **Fixed camera** (`CTRLF_CAMERA_MODE=fixed`): a tracked person left the view after the placement. Only in this mode do
-  reminders name an area such as "on the bed", because only then do Keepsake's room areas mean anything.
-- **Either:** an explicit "heading out" text or the manual check.
+**Separation** is what makes a reminder due: the item has been out of the wearer's view for the
+mode's delay. This is a weak signal: it means the camera turned away, not that the item stayed behind.
+An explicit "heading out" text or the manual check also counts. Reminders never name a room area.
 
 ## Run
 
@@ -80,8 +75,7 @@ curl -X PUT http://127.0.0.1:8000/api/reminders/settings -H 'X-Keepsake-Local: 1
   -d '{"mode": "high_assistance", "enabled": true, "opt_in": true, "important": ["wallet", "bottle", "keys"]}'
 ```
 
-Settings persist in Keepsake's database. The camera mode is the vision pipeline's own
-`CTRLF_CAMERA_MODE` (`wearable` | `fixed`). Per-mode tuning goes in `overrides` (per mode: `delay`, `min_confidence`, `per_item_cooldown`, `global_cooldown`,
+Settings persist in Keepsake's database. Per-mode tuning goes in `overrides` (per mode: `delay`, `min_confidence`, `per_item_cooldown`, `global_cooldown`,
 `max_photo_age`, `max_pending`, `pickup_cancel_conf`, `snooze`). Inspect everything, including each
 item's state and recent decisions, with `GET /api/reminders/settings`.
 

@@ -544,7 +544,6 @@ class ReminderEngine:
             hold = self._hold(status)
             picked, skipped = [], []
             for oid in self.important():
-                category = self.items[oid]["category"]
                 o, rec = self._objs[oid], self._object(oid)
                 photo = self._photo(o, rec)
                 tmp = _Obj(oid)
