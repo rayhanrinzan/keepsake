@@ -269,6 +269,8 @@ class VisionWorker(threading.Thread):
         hands = []
         try:
             obs = self._detect(model, frame, class_ids) + self._detect_items(frame)
+            from verify import big_enough
+            obs = big_enough(obs, MIN_CONF)
             if self.verifier is not None:
                 before = len(obs)
                 obs = self.verifier.keep(frame, obs)
