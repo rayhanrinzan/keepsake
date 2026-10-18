@@ -7,7 +7,7 @@ import { CenterType } from '../components/CenterType'
 import { GlassPill } from '../components/GlassPill'
 import { T } from '../components/ui'
 import { VoiceOrb } from '../components/VoiceOrb'
-import { getObjects, SAMPLE } from '../lib/api'
+import { getObjects, SAMPLE, where } from '../lib/api'
 import type { TrackedObject } from '../lib/api'
 import { answer } from '../lib/assistant'
 import { itemPhoto } from '../lib/items'
@@ -141,12 +141,12 @@ export default function Home() {
           {items && items.length === 0 && <T size={17} color={O.inkSoft}>Nothing is being tracked yet.</T>}
           <View style={{ gap: 14 }}>
             {items?.map(o => (
-              <Pressable key={o.object_id} onPress={() => router.push({ pathname: '/item/[id]', params: { id: o.object_id } })} accessibilityRole="button" accessibilityLabel={`${o.name}. ${o.region ?? 'Not seen yet'}. Tap to find it.`}
+              <Pressable key={o.object_id} onPress={() => router.push({ pathname: '/item/[id]', params: { id: o.object_id } })} accessibilityRole="button" accessibilityLabel={`${o.name}. ${where(o)}. Tap to find it.`}
                 style={({ pressed }) => [s.item, !o.seen && { opacity: 0.6 }, pressed && { opacity: 0.7 }]}>
                 <Image source={itemPhoto(o.icon)} style={s.photo} resizeMode="contain" />
                 <View style={{ flex: 1 }}>
                   <T size={21} color={O.ink} numberOfLines={1}>{o.name}</T>
-                  <T size={14} weight="round" color={O.inkSoft} numberOfLines={1}>{o.region ?? 'Not seen yet'}</T>
+                  <T size={14} weight="round" color={O.inkSoft} numberOfLines={1}>{where(o)}</T>
                 </View>
               </Pressable>
             ))}

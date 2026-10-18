@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { StyleSheet, TextInput, View } from 'react-native'
 import { ItemRow } from '../components/ItemRow'
 import { Card, Empty, Screen, T } from '../components/ui'
-import { getObjects } from '../lib/api'
+import { getObjects, where } from '../lib/api'
 import type { TrackedObject } from '../lib/api'
 import { useSettings } from '../lib/settings'
 import { C, F } from '../lib/theme'
@@ -34,7 +34,7 @@ export default function Find() {
       {items && shown.length === 0 && <Empty>{q ? `Nothing called "${q}" yet.` : 'Nothing is being tracked yet.'}</Empty>}
       {shown.map(o => (
         // Tapping an item reads its place out loud.
-        <Card key={o.object_id} onPress={() => speak(`${o.name}. ${o.seen ? o.region : 'Not seen yet'}.`, prefs)} label={`${o.name}, ${o.region ?? 'not seen yet'}`}>
+        <Card key={o.object_id} onPress={() => speak(`${o.name}. ${where(o)}.`, prefs)} label={`${o.name}, ${where(o).toLowerCase()}`}>
           <ItemRow o={o} />
         </Card>
       ))}

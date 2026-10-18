@@ -2,28 +2,26 @@
 import type { Answer, Profile, Reminder, TrackedObject } from './api'
 
 const min = (m: number) => new Date(Date.now() - m * 60000).toISOString()
-const item = (id: string, name: string, icon: string, region: string | null, m: number | null, visible = false): TrackedObject => ({
+// m = minutes since last seen, or null if never seen.
+const item = (id: string, name: string, icon: string, m: number | null, visible = false): TrackedObject => ({
   object_id: id,
   category: id,
   name,
   icon,
-  seen: region != null,
-  status: region == null ? 'never' : visible ? 'visible' : 'last_seen',
-  region,
+  seen: m != null,
+  status: m == null ? 'never' : visible ? 'visible' : 'last_seen',
   last_seen: m == null ? null : min(m),
   visible,
-  moving: false,
   snapshot: null,
 })
 
 export const objects: TrackedObject[] = [
-  item('keys', 'Keys', 'keys', 'Kitchen counter', 12),
-  item('glasses', 'Glasses', 'glasses', 'Bedside table', 3, true),
-  item('phone', 'Phone', 'phone', 'Couch', 40),
-  item('wallet', 'Wallet', 'wallet', 'Coat pocket', 180),
-  item('airpods', 'AirPods', 'airpods', 'Desk', 25, true),
-  item('bottle', 'Water bottle', 'bottle', 'Kitchen table', 70),
-  item('remote', 'TV remote', 'remote', null, null),
+  item('car_key_01', 'Keys', 'keys', 12),
+  item('glasses_01', 'Glasses', 'glasses', 3, true),
+  item('wallet_01', 'Wallet', 'wallet', 180),
+  item('airpods_case_01', 'AirPods', 'airpods', 25, true),
+  item('bottle_01', 'Water Bottle', 'bottle', 70),
+  item('backpack_01', 'Backpack', 'backpack', null),
 ]
 
 export const profile: Profile = {
@@ -43,8 +41,9 @@ export function ask(text: string): Answer {
   const t = text.toLowerCase()
   const o = objects.find(x => t.includes(x.name.toLowerCase()) || t.includes(x.object_id))
   if (!o) return { found: false, answer: "I'm not sure which thing you mean. Could you say it again?", object: null }
-  if (!o.region) return { found: false, answer: `I haven't seen your ${o.name.toLowerCase()} yet.`, object: o }
+  if (!o.seen) return { found: false, answer: `I haven't seen your ${o.name.toLowerCase()} yet.`, object: o }
   const plural = o.name.endsWith('s')
-  const verb = o.visible ? (plural ? 'are' : 'is') : plural ? 'were last' : 'was last'
-  return { found: true, answer: `Your ${o.name.toLowerCase()} ${verb} on the ${o.region.toLowerCase()}.`, object: o }
+  return o.visible
+    ? { found: true, answer: `Your ${o.name.toLowerCase()} ${plural ? 'are' : 'is'} in view right now.`, object: o }
+    : { found: true, answer: `I last saw your ${o.name.toLowerCase()} ${Math.round((Date.now() - new Date(o.last_seen!).getTime()) / 60000)} minutes ago.`, object: o }
 }

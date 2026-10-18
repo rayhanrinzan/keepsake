@@ -14,12 +14,14 @@ import { useSettings } from '../../lib/settings'
 import { O } from '../../lib/theme'
 import { speak } from '../../lib/voice'
 
+/** Grounded like the web app: when it was last seen and the photo, never a room location. */
 function sentence(o: TrackedObject) {
-  if (!o.seen || !o.region) return `I haven't seen your ${o.name.toLowerCase()} yet.`
+  if (!o.seen) return `I haven't seen your ${o.name.toLowerCase()} yet.`
   const plural = o.name.endsWith('s')
-  const place = `the ${o.region.toLowerCase()}`
-  if (o.visible) return `Your ${o.name.toLowerCase()} ${plural ? 'are' : 'is'} on ${place}.`
-  return `Your ${o.name.toLowerCase()} ${plural ? 'were' : 'was'} last on ${place}, ${ago(o.last_seen)}.`
+  const noun = o.name.toLowerCase()
+  if (o.visible) return `Your ${noun} ${plural ? 'are' : 'is'} in view right now.`
+  const photo = o.snapshot ? ' Here is the last photo.' : ''
+  return `I last saw your ${noun} ${ago(o.last_seen)}.${photo} ${plural ? 'They' : 'It'} may have moved since.`
 }
 
 /** Locate one item: says where it is out loud as soon as it opens, and types it out as it speaks. */

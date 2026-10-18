@@ -1,6 +1,7 @@
 import * as sample from './sample'
 
-/** Same record the web app uses (backend /api/objects). */
+/** Same record the web app uses (backend /api/objects). The camera is worn, so there is no room
+ *  location: only when it was last seen, whether it's in view now, and its last photo. */
 export interface TrackedObject {
   object_id: string
   category: string
@@ -8,10 +9,8 @@ export interface TrackedObject {
   icon: string
   seen: boolean
   status: 'visible' | 'last_seen' | 'never'
-  region: string | null
   last_seen: string | null
   visible: boolean
-  moving: boolean
   snapshot: { image_url: string; timestamp: string } | null
 }
 
@@ -74,7 +73,7 @@ export async function getReminders(): Promise<Reminder[]> {
   return SAMPLE ? sample.reminders : []
 }
 
-/** "on the table", "10 minutes ago" */
+/** "just now", "10 minutes ago" */
 export function ago(iso: string | null) {
   if (!iso) return ''
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
@@ -85,6 +84,6 @@ export function ago(iso: string | null) {
 }
 
 export function where(o: TrackedObject) {
-  if (!o.seen || !o.region) return 'Not seen yet'
-  return `${o.visible ? 'On' : 'Last seen on'} the ${o.region.toLowerCase()}`
+  if (!o.seen) return 'Not seen yet'
+  return o.visible ? 'In view now' : `Last seen ${ago(o.last_seen)}`
 }

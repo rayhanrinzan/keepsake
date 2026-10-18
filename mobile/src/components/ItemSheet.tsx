@@ -4,6 +4,7 @@ import { useRef } from 'react'
 import { Animated, Image, PanResponder, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Circle, Defs, Path, RadialGradient, Rect, Stop } from 'react-native-svg'
+import { where } from '../lib/api'
 import type { TrackedObject } from '../lib/api'
 import { itemPic } from '../lib/items'
 import { C } from '../lib/theme'
@@ -64,7 +65,7 @@ export function ItemSheet({ items, error, top }: { items: TrackedObject[] | null
         {error && <Empty>I can't reach your Keepsake right now. I'll keep trying.</Empty>}
         {items && items.length === 0 && <Empty>Nothing is being tracked yet.</Empty>}
         {items?.map(o => (
-          <Pressable key={o.object_id} onPress={() => router.push({ pathname: '/item/[id]', params: { id: o.object_id } })} accessibilityRole="button" accessibilityLabel={`${o.name}. ${o.region ?? 'Not seen yet'}. Tap to locate.`} style={({ pressed }) => pressed && st.pressed}>
+          <Pressable key={o.object_id} onPress={() => router.push({ pathname: '/item/[id]', params: { id: o.object_id } })} accessibilityRole="button" accessibilityLabel={`${o.name}. ${where(o)}. Tap to locate.`} style={({ pressed }) => pressed && st.pressed}>
             <Glass dark style={[s.card, !o.seen && { opacity: 0.55 }]}>
               {/* A faint pool of light under the picture so dark things like glasses still show. */}
               <View style={s.picBox}>
@@ -83,7 +84,7 @@ export function ItemSheet({ items, error, top }: { items: TrackedObject[] | null
                 <T size={22} color="#fff" numberOfLines={1}>{o.name}</T>
                 <View style={s.where}>
                   {o.seen && <View style={[s.dot, { backgroundColor: o.visible ? '#3ddc97' : C.orange }]} />}
-                  <T size={16} weight="round" color="rgba(255,255,255,0.7)" numberOfLines={1} style={{ flexShrink: 1 }}>{o.region ?? 'Not seen yet'}</T>
+                  <T size={16} weight="round" color="rgba(255,255,255,0.7)" numberOfLines={1} style={{ flexShrink: 1 }}>{where(o)}</T>
                 </View>
               </View>
             </Glass>
