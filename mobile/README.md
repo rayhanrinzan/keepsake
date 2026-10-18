@@ -23,6 +23,18 @@ item boxed plus earlier photos on the item page, last-photo thumbnails, Recent a
 and Privacy (save photos, clear all memories). On a phone build Grok and speech recognition fall back to
 the device voice and typing.
 
+**On a phone (demo video):** build the web app next to the API and open it over HTTPS (phone browsers
+only allow the microphone on HTTPS):
+
+```bash
+cd mobile && EXPO_PUBLIC_API_URL=same-origin npx expo export --platform web --output-dir ../backend/data/mobile-web
+cd .. && .venv/bin/python scripts/serve_mobile.py backend/data/mobile-web   # prints ?k=KEY
+cloudflared tunnel --url http://127.0.0.1:8099                             # prints https://….trycloudflare.com
+```
+
+Open `https://….trycloudflare.com/?k=KEY` on the phone. Anyone with that link can see Keepsake while it
+runs, so stop both when you're done. The chest iPhone is the camera, so use a second phone for the app.
+
 **Setting up the camera:** tap the logo for Settings, then **Setup → Show camera feed**. The live view of the
 worn camera (and its status, e.g. black frames) appears above My Items. It's off by default and remembered
 on the device, so turn it off again before handing the phone to someone (or for judging).
