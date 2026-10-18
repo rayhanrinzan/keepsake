@@ -8,6 +8,7 @@ export function speak(text: string, s: Settings, onDone?: () => void) {
 }
 
 export const stopSpeaking = () => Speech.stop()
+export const stillSpeaking = () => Speech.isSpeakingAsync()
 
 type Rec = { start: () => void; stop: () => void; onresult: ((e: any) => void) | null; onend: (() => void) | null; onerror: (() => void) | null; interimResults: boolean; lang: string }
 

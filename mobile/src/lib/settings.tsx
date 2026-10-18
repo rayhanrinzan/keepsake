@@ -7,9 +7,20 @@ export interface Settings {
   voiceVolume: number // 0..1, how loud Keepsake speaks
   voiceRate: number // 0.7 slow .. 1 normal
   listenAfterSpeaking: boolean
+  assist: Assist // how much Keepsake leads the conversation
 }
 
-const DEFAULTS: Settings = { textScale: 1, voiceVolume: 1, voiceRate: 0.85, listenAfterSpeaking: false }
+/**
+ * More help: Keepsake speaks first ("What are you looking for?") and checks in often to ask whether
+ * they're forgetting something. Some help: speaks first and checks in now and then. Less help: just
+ * listens when they tap the microphone, and never checks in.
+ */
+export type Assist = 'more' | 'some' | 'less'
+
+// How often Keepsake checks in, in minutes, for each level (none for less help).
+export const CHECK_IN: Record<Assist, number | null> = { more: 10, some: 45, less: null }
+
+const DEFAULTS: Settings = { textScale: 1, voiceVolume: 1, voiceRate: 0.85, listenAfterSpeaking: false, assist: 'some' }
 const KEY = 'keepsake.settings'
 
 const Ctx = createContext<{ s: Settings; set: (p: Partial<Settings>) => void }>({ s: DEFAULTS, set: () => {} })
