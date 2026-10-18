@@ -188,11 +188,18 @@ def get_object_snapshots(object_id: str, limit: int = 20):
 
 
 @app.get("/api/snapshots/{snapshot_id}/image")
-def get_snapshot_image(snapshot_id: int):
+def get_snapshot_image(snapshot_id: int, highlight: bool = False):
+    """The stored photo. `highlight=1` circles the item (used for photos sent over Photon)."""
     s = db.get_snapshot(snapshot_id)
     path = snapshots.path_for(s["filename"]) if s else None
     if path is None:
         raise HTTPException(404, "Photo not found")
+    if highlight:
+        data = snapshots.highlighted(s)
+        if data is None:
+            raise HTTPException(404, "Photo not found")
+        return Response(data, media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=31536000, immutable"})
     return FileResponse(path, media_type="image/jpeg",
                         headers={"Cache-Control": "private, max-age=31536000, immutable"})
 

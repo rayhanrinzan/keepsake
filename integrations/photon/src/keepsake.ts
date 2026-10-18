@@ -130,11 +130,11 @@ export class KeepsakeClient {
     return this.write<ReminderStatus>("PUT", "/api/reminders/settings", changes);
   }
 
-  /** One stored photo (JPEG bytes), by snapshot id. */
+  /** One stored photo (JPEG bytes), by snapshot id, with the item circled. */
   async photo(snapshotId: number): Promise<Buffer> {
     let res: Response;
     try {
-      res = await this.fetchImpl(`${this.baseUrl}/api/snapshots/${snapshotId}/image`, {
+      res = await this.fetchImpl(`${this.baseUrl}/api/snapshots/${snapshotId}/image?highlight=1`, {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {

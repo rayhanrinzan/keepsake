@@ -102,6 +102,25 @@ class SnapshotStore:
             self._unlink(old)
         return snap_id
 
+    def highlighted(self, snap: dict) -> bytes | None:
+        """The stored photo as JPEG bytes with a circle drawn around the item's bounding box.
+
+        Rendered on request so the stored photo stays clean for the app's own overlay."""
+        path = self.path_for(snap["filename"])
+        image = cv2.imread(str(path)) if path else None
+        if image is None:
+            return None
+        h, w = image.shape[:2]
+        x0, y0, x1, y1 = snap["x0"] * w, snap["y0"] * h, snap["x1"] * w, snap["y1"] * h
+        center = (int((x0 + x1) / 2), int((y0 + y1) / 2))
+        # Pad the box so the circle surrounds the item instead of cutting through it.
+        axes = (max(int((x1 - x0) * 0.75), 24), max(int((y1 - y0) * 0.75), 24))
+        thickness = max(4, w // 160)
+        cv2.ellipse(image, center, axes, 0, 0, 360, (255, 255, 255), thickness + 4, cv2.LINE_AA)
+        cv2.ellipse(image, center, axes, 0, 0, 360, (0, 0, 255), thickness, cv2.LINE_AA)
+        ok, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        return buf.tobytes() if ok else None
+
     def path_for(self, filename: str) -> Path | None:
         if not FILENAME_RE.match(filename):
             return None
