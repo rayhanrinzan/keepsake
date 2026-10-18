@@ -39,6 +39,9 @@ also binds port 8000, so run one or the other.
   frozen or disconnected camera cancels. Queued alerts are claimed and re-validated before delivery.
 - `backend/presence.py` (Roman): person presence; its counter is reported as 0 (other people leaving a
   worn camera's view isn't the wearer leaving).
+- `backend/describe.py`: `SceneDescriber`: on a lookup, the item's newest photo (box drawn on) goes to a
+  Grok vision model for one sentence of reference points ("It was on a green seat next to…"); cached per
+  photo; any failure means no sentence. `CTRLF_DESCRIBE=0` off. `scripts/try_describe.py` tries it.
 - `backend/voice.py`: Grok TTS (`XAI_API_KEY`), `/api/voice`, `/api/tts`.
 - Also: `snapshots.py` (JPEG writer, retention, dedupe), `database.py` (SQLite: objects, snapshots,
   observations, settings; the legacy `events` table and region columns are no longer written).
