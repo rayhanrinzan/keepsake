@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Settings } from 'lucide-react'
 import { api } from './lib/api'
 import { setVoiceConfig, speechOutputSupported, startWakeListener, stopWakeListener, unlockSpeech } from './lib/voice'
@@ -15,6 +15,7 @@ import { PrivacyPanel } from './components/PrivacyPanel'
 import { SettingsDialog } from './components/SettingsDialog'
 
 const POLL_MS = 1500
+const LOST_ASK_MS = 10_000 // an item out of view this long gets "Are you looking for something?"
 
 function readView(): View {
   try {
@@ -63,6 +64,9 @@ export default function App() {
   const [wakeState, setWakeState] = useState<WakeState>('off')
   const [voiceReady, setVoiceReady] = useState(!speechOutputSupported)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [prompt, setPrompt] = useState<{ id: number; text: string } | null>(null)
+  const goneSince = useRef<Record<string, number>>({}) // item -> when it left the view (ms)
+  const asked = useRef<Set<string>>(new Set()) // items already asked about since they left
 
   useEffect(() => {
     // The first click or key press anywhere lets the app speak on its own afterwards.
@@ -79,8 +83,26 @@ export default function App() {
     try {
       const [h, o, e] = await Promise.all([api.health(), api.objects(), api.events(10)])
       setHealth(h)
-      // No automatic "Are you looking for something?" when someone walks out of view: usually
-      // they just put something down. Lookups start from a wake phrase instead (see below).
+      // An item that was in view and has stayed out of view for LOST_ASK_MS: ask out loud once.
+      // Only items seen in view during this session count, and seeing one again re-arms it.
+      const t = Date.now()
+      let due = false
+      for (const item of o) {
+        if (item.visible) {
+          goneSince.current[item.object_id] = 0
+          asked.current.delete(item.object_id)
+        } else if (goneSince.current[item.object_id] === 0) {
+          goneSince.current[item.object_id] = t
+        } else if (goneSince.current[item.object_id] && t - goneSince.current[item.object_id] >= LOST_ASK_MS
+                   && !asked.current.has(item.object_id)) {
+          asked.current.add(item.object_id)
+          due = true
+        }
+      }
+      if (due) {
+        setPrompt({ id: t, text: 'Are you looking for something?' })
+        setView('list') // the voice conversation lives in the search panel
+      }
       setObjects(o)
       setEvents(e)
       setOffline(false)
@@ -186,6 +208,7 @@ export default function App() {
             </div>
             <SearchPanel
               onResult={onAnswer}
+              prompt={prompt}
               objects={objects}
               wake={wake}
               onWakeHandled={() => setWake(null)}
