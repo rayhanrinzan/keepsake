@@ -2,7 +2,7 @@
 
 > *Your room remembers, so you don't have to.*
 
-Keepsake sees six everyday items through a chest-worn iPhone and remembers **when each was last seen, with a photo as evidence**. Tap an item to see the photo, press **Voice** and say "my keys", or get a gentle iMessage reminder about something you just put down.
+Keepsake sees everyday items through a chest-worn iPhone and remembers **when each was last seen, with a photo as evidence**. Tap an item to see the photo, press **Voice** and say "my keys", or get a gentle iMessage reminder about something you just put down.
 
 Built for HackHarvard 2026. Vision and memory run on your own computer. It's a prototype for memory support, not a clinically validated device.
 
